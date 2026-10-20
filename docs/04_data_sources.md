@@ -151,7 +151,29 @@ Report the numbers before any model use.
 across lines (`2016-09-0` … `6`), the rightmost column, where signing dates sit, is cut off (up to 72 truncated dates per
 plan), and reference formats vary by country. P132775's "latest plan" is a 48 MB text of a repeated pre-STEP "Sample
 Procurement Plan" template. **The real test therefore parses the PDFs with `ai_parse_document`:**
-`notebooks/02_procplan_test.py` (results pending).
+`notebooks/02_procplan_test.py`.
+
+**Run 1 result (2026-10-20) [M]:** 765 activities detected in 13 of 16 plans (plan coverage 81%). **0 parsed cleanly
+(0%), so the gate failed**, and tests (a) and (b) were skipped automatically. Failure reasons: no status 390, bad date
+285, no method 64, no ref 12, failed only on review type 14. P132775 was skipped (4,028 pages); P160505 and P155522
+yielded no activity tables.
+
+**This 0% is not a valid measurement of the plans [M]:** every detected row contains "Prior"/"Post" by construction, yet
+14 rows failed *only* because the review-type column came back empty. That proves the parser's column mapping is
+misaligned, which is a defect in my untested HTML-table code. The plans are not shown to be unusable yet. A diagnostic
+cell (§9 of the notebook, no new parsing) is added to fix the mapping from evidence.
+
+**Debugging pass (one only, user's stop rule) [V: unit tests]:** three checker bugs found and fixed:
+1. **Contradiction** ("ok": 14 with 0 clean): the clean decision required a Prior/Post review type, but the failure
+   explanation skipped that rule. Now one function both decides and explains.
+2. **Column shift:** the HTML reader ignored single-quoted `colspan='2'` / `rowspan='2'`, shifting every column after a
+   merged header cell. Caught by a unit test.
+3. **Fragile mapping:** review type, method and status are now found by cell *value*; dates are read as `2023-06-13`,
+   `13-Jun-2023` or `13/06/2023`, including dates wrapped inside a cell.
+
+Checker in `src/procplan/check.py`, 7 unit tests passing locally; notebook §10 re-runs the gate on the stored parse.
+**Stop rule:** if the re-run is still below 70%, Procurement Plans are dropped and the reason recorded here.
+**Status: re-run pending.**
 
 **Bonus signal [V]:** one India plan shows an activity described as "Rebidding-…" with status "Canceled". Plans may
 carry the re-tender/cancellation labels that structured data lacks (H2).

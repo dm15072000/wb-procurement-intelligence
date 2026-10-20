@@ -180,6 +180,23 @@ def valid_iso(s):
     except ValueError:
         return False
 
+def clean_reason(rec):
+    """Single source of truth: returns 'clean' or the FIRST failed rule. Used both to decide clean and to explain failures,
+    so the two can never disagree (run 1 bug: the explanation skipped the review-type rule, giving 'ok': 14 with 0 clean)."""
+    if not rec["ref"]:
+        return "no ref"
+    if rec["review"] not in ("Prior", "Post"):
+        return "no review type"
+    if not rec["method"]:
+        return "no method"
+    if not rec["status"]:
+        return "no status"
+    if not rec["n_dates"]:
+        return "no dates"
+    if rec["bad_dates"]:
+        return "bad date"
+    return "clean"
+
 activities = []
 for r in rows:
     pid = r.path.split("/")[-1].replace(".pdf", "")
@@ -221,8 +238,8 @@ for r in rows:
                 "notice_actual": min([cell(i) for i in c_note if ISO.match(cell(i))], default=None),
                 "description": cell(0),
             }
-            rec["clean"] = bool(ref and rec["review"] in ("Prior", "Post") and rec["method"] and rec["status"]
-                                and rec["n_dates"] >= 1 and not bad_dates)
+            rec["reason"] = clean_reason(rec)
+            rec["clean"] = rec["reason"] == "clean"
             activities.append(rec)
 
 print("activities detected:", len(activities))
@@ -254,9 +271,7 @@ gate = {
     "plans_without_activities": [p for p in SLICE if per_plan[p][0] == 0],
     "plans_skipped": {p: v["skipped"] for p, v in plans.items() if "skipped" in v},
     "per_plan_detected_clean": {p: per_plan[p] for p in SLICE},
-    "why_not_clean": Counter(
-        "no ref" if not a["ref"] else "no method" if not a["method"] else "no status" if not a["status"]
-        else "no dates" if not a["n_dates"] else "bad date" if a["bad_dates"] else "ok" for a in activities),
+    "why_not_clean": Counter(a["reason"] for a in activities),
 }
 print(json.dumps(gate, indent=2))
 
@@ -364,3 +379,189 @@ print(json.dumps(test_b, indent=2))
 with open(f"{VOL}/activities.json", "w") as fh:
     json.dump(activities, fh)
 print(json.dumps({"plans": plans, "gate": gate, "test_a": test_a, "test_b": test_b}, indent=2, default=str))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 9. Diagnostics: why did activities fail? (no new parsing, no quota)
+# MAGIC The first run scored 0% clean, but 14 rows failed *only* on review type even though every detected row contains
+# MAGIC "Prior"/"Post". That means the **column mapping** in cell 4 is misaligned, which is a parser bug, not necessarily a
+# MAGIC problem with the plans. This cell:
+# MAGIC 1. saves the raw `ai_parse_document` output to the volume, so a fixed parser can be re-run **without re-parsing**
+# MAGIC    (and parsing is not fully deterministic, see `docs/05_parser_benchmark.md`);
+# MAGIC 2. prints, for 3 plans, the joined column names and the first 2 activity rows cell by cell, plus one raw HTML
+# MAGIC    table, so the mapping can be fixed from evidence.
+# MAGIC
+# MAGIC If `rows` is no longer in memory (cluster restarted), re-run cells 1–3 first.
+
+# COMMAND ----------
+
+with open(f"{VOL}/parsed_raw.json", "w") as fh:
+    json.dump({r.path.split("/")[-1].replace(".pdf", ""): r.doc for r in rows}, fh)
+
+diag = {}
+for r in rows:
+    pid = r.path.split("/")[-1].replace(".pdf", "")
+    if pid not in ("P147864", "P143751", "P132982"):
+        continue
+    tabs = [el.get("content", "") for el in walk(json.loads(r.doc)) if el.get("type") == "table"]
+    out = []
+    for t in tabs:
+        g = html_grid(t)
+        fa = next((i for i, row in enumerate(g) if is_activity(row)), None)
+        if fa is None:
+            continue
+        out.append({
+            "n_header_rows": fa,
+            "header_rows": [row[:20] for row in g[:fa]],
+            "first_activity_rows": [list(enumerate(row))[:25] for row in g[fa:fa + 2]],
+            "row_lengths": sorted({len(row) for row in g}),
+            "raw_html": t[:3000],
+        })
+        if len(out) == 2:
+            break
+    diag[pid] = {"tables_with_activities": out}
+print(json.dumps(diag, indent=1)[:30000])
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10. One debugging pass: fixed checker + diagnostics + gate re-run (no new parsing)
+# MAGIC **Bugs found in run 1:**
+# MAGIC 1. *Contradiction:* the clean decision required a Prior/Post review type but the failure explanation skipped that
+# MAGIC    rule, so 14 rows showed as "ok" while being counted not clean. Now one function (`check_row`) both decides and
+# MAGIC    explains.
+# MAGIC 2. *Misaligned columns:* the HTML reader ignored single-quoted `colspan='2'` / `rowspan='2'`, shifting every column
+# MAGIC    after a merged header cell. Fixed and unit-tested.
+# MAGIC 3. *Fragile mapping:* fields were taken from header positions. Review type, method and status are now found by
+# MAGIC    their **values** in each row, and dates are read in several formats (`2023-06-13`, `13-Jun-2023`, `13/06/2023`),
+# MAGIC    including a date wrapped across lines inside one cell.
+# MAGIC
+# MAGIC The checker lives in `src/procplan/check.py` with tests in `tests/test_procplan_check.py` (7 passing locally).
+# MAGIC **Stop rule (user):** this is the only debugging pass. If the clean rate is still below 70%, Procurement Plans are
+# MAGIC dropped.
+
+# COMMAND ----------
+
+# Self-contained: after a restart, run only section 1 (setup) and then this section. Cell 3 (parsing) is NOT needed
+# because the parse was stored by cell 9. That saves ai_parse_document quota and keeps the text identical.
+import os, sys, json
+from collections import Counter, defaultdict
+sys.path.append(os.path.abspath(".."))  # repo root (this notebook lives in notebooks/)
+import importlib
+import src.procplan.check as ck
+importlib.reload(ck)
+
+SLICE = ["P147864", "P163239", "P157054", "P160505", "P155522", "P151449", "P153548", "P132833",
+         "P144726", "P143751", "P132775", "P132621", "P132982", "P145778", "P129401", "P121185"]
+
+def walk(obj):
+    if isinstance(obj, dict):
+        if "type" in obj:
+            yield obj
+        for v in obj.values():
+            yield from walk(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from walk(v)
+
+def find_col(names, *need):
+    """The OLD header-based lookup, kept only to show what run 1 mapped."""
+    for i, n in enumerate(names):
+        if all(k in n for k in need):
+            return i
+    return None
+
+# Use the stored parse from cell 9 if present; otherwise the in-memory result of cell 3.
+raw_path = f"{VOL}/parsed_raw.json"
+if os.path.exists(raw_path):
+    parsed_docs = json.load(open(raw_path))
+else:
+    parsed_docs = {r.path.split("/")[-1].replace(".pdf", ""): r.doc for r in rows}
+    json.dump(parsed_docs, open(raw_path, "w"))
+print("plans available from stored parse:", len(parsed_docs))
+
+# COMMAND ----------
+
+def tables_of(doc_json):
+    return [el.get("content", "") for el in walk(json.loads(doc_json)) if el.get("type") == "table"]
+
+def is_act(row):
+    return any((c or "").strip() in ("Prior", "Post") for c in row)
+
+activities_v2, diag_rows = [], []
+for pid, doc in parsed_docs.items():
+    header = None
+    for t in tables_of(doc):
+        g = ck.html_grid(t)
+        fa = next((i for i, row in enumerate(g) if is_act(row)), None)
+        if fa is None:
+            continue
+        if fa > 0:
+            ncol = max(len(x) for x in g[:fa])
+            header = [" ".join((r[i] if i < len(r) else "") for r in g[:fa]).lower() for i in range(ncol)]
+        data = [row for row in g[fa:] if is_act(row)]
+        names = header or []
+        c_sign = ck.date_column(names, data, "signed", "actual") if names else None
+        c_note = [i for i in range(len(names)) if "actual" in names[i]
+                  and any(k in names[i] for k in ("notice", "invitation", "expression of interest"))]
+        for row in data:
+            rec = ck.check_row(row)
+            sd = ck.first_date(row[c_sign]) if c_sign is not None and c_sign < len(row) else None
+            nds = [ck.first_date(row[i]) for i in c_note if i < len(row)]
+            nds = [d for d in nds if d]
+            rec.update({"pid": pid, "review": rec["review"],
+                        "signed_actual": sd.isoformat() if sd else None,
+                        "notice_actual": min(nds).isoformat() if nds else None})
+            rec["clean"] = rec["reason"] == "clean"
+            activities_v2.append(rec)
+            if pid in ("P147864", "P143751") and sum(d["pid"] == pid for d in diag_rows) < 5:
+                old = {"review_col": find_col(names, "review"), "method_col": find_col(names, "method"),
+                       "status_col": find_col(names, "status")}
+                old_vals = {k: (row[v] if v is not None and v < len(row) else None) for k, v in old.items()}
+                diag_rows.append({"pid": pid, "raw_cells": list(enumerate(row)),
+                                  "old_header_mapping": {**old, **{k + "_value": v for k, v in old_vals.items()}},
+                                  "new_value_mapping": {k: rec[k] for k in ("ref", "review", "method", "status", "n_dates")},
+                                  "bad_date_cells": rec["bad_dates"], "verdict": rec["reason"]})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 10a. Diagnostics: 5 rows from each of 2 plans
+# MAGIC For each row: the raw cells (index, text), what the **old** header-based mapping picked, what the **new**
+# MAGIC value-based checker found, which cells (if any) look like broken dates, and the verdict.
+
+# COMMAND ----------
+
+for d in diag_rows:
+    print(json.dumps(d, ensure_ascii=False)[:2500], "\n")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 10b. Gate re-run with the fixed checker
+# MAGIC If it passes (≥ 70%), re-run cells 6 and 7 for tests (a) and (b): they use the `activities` and `gate` variables,
+# MAGIC which this cell replaces with the fixed versions. If it fails, Procurement Plans are dropped (stop rule).
+
+# COMMAND ----------
+
+per = defaultdict(lambda: [0, 0])
+for a in activities_v2:
+    per[a["pid"]][0] += 1
+    per[a["pid"]][1] += a["clean"]
+n_det, n_clean = len(activities_v2), sum(a["clean"] for a in activities_v2)
+gate_v2 = {
+    "activities_detected": n_det, "activities_clean": n_clean,
+    "parse_rate": round(n_clean / n_det, 3) if n_det else 0.0,
+    "passes_70pct_gate": bool(n_det) and n_clean / n_det >= 0.70,
+    "plan_coverage": round(sum(1 for p in SLICE if per[p][0] > 0) / len(SLICE), 3),
+    "plans_without_activities": [p for p in SLICE if per[p][0] == 0],
+    "per_plan_detected_clean": {p: per[p] for p in SLICE},
+    "why_not_clean": Counter(a["reason"] for a in activities_v2),
+    "clean_with_signed_actual": sum(1 for a in activities_v2 if a["clean"] and a["signed_actual"]),
+    "clean_with_signed_and_notice_actual": sum(1 for a in activities_v2 if a["clean"] and a["signed_actual"] and a["notice_actual"]),
+}
+activities, gate = activities_v2, gate_v2
+with open(f"{VOL}/activities_v2.json", "w") as fh:
+    json.dump(activities_v2, fh, default=str)
+print(json.dumps(gate_v2, indent=2))

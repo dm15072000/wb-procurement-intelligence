@@ -30,11 +30,28 @@ All numbers are **[M] measured** unless labelled otherwise.
   cost and quota question for the proposal [P].
 - **Fallback:** `pypdf` plain text, kept for any document where `ai_parse_document` returns an error.
 
+## Manual check of the side-by-side sample (India ICR, notebook cell 6) [M]
+
+- **Tables:** `ai_parse_document`'s first table is the currency table, correctly split into cells
+  (`Currency Unit = | Indian Rupee (Rs.)`, `Rs. 84 = | US$1`). pdfplumber's first "table" is the **cover page dumped into
+  one cell** with empty cells around it, not a real table.
+- **Headings:** `ai_parse_document` returns clean structural headings (DATA SHEET, BASIC DATA, KEY DATES, RATINGS
+  SUMMARY, ISR RATINGS…). pdfplumber's heuristic returns **cover-page lines** ("Loan Number 8940-IN", "December 23, 2024")
+  and **table-of-contents lines** ("IV. BANK PERFORMANCE … 14").
+- **So pdfplumber's heading recall is inflated:** some of its "found" sections are TOC entries, not real headings. The
+  tie on recall flatters pdfplumber, which strengthens the decision.
+
+## Repeatability [M]
+
+A second run of the same cell gave slightly different counts for the same PDFs: China `tables_well_formed` 28 → 27,
+`page_header` 15 → 17; Sri Lanka `page_header` 80 → 79; total time 91.0 s → 93.3 s. **`ai_parse_document` output is not
+fully deterministic** [M]. Consequence [P]: parse each document **once**, store the result in Delta, and chunk from that
+stored copy, so citations always point to the same text.
+
 ## Caveats
 
 - **3 documents only.** These results show a direction, not a guarantee across all document types (PADs, ISRs).
-- **The table check is automatic, not a check of cell correctness.** The side-by-side sample (notebook cell 6) has not
-  been reviewed yet. To do: compare one table per parser against the PDF by eye.
+- The table check is automatic plus one manual sample; cell-by-cell correctness was not checked for every table.
 - Both parsers missed one of the five standard sections in the India ICR. Which one is not yet known [A: likely a
   heading phrased differently]; to check when chunking in Stage 3.
 - `ai_parse_document` uses Free Edition AI-function quota; the limit has not been measured.
