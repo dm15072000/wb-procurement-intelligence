@@ -143,6 +143,19 @@ Follow-ups [P]:
 "structured". My recommendation is to **use them**: parse only the **latest version per slice project** (16
 documents), measure the parse success rate, and fall back to "not used" if under ~70% of activities parse cleanly.
 
+**Decision (2026-10-20) [V]:** approved for a test. Parse the latest plan of each of the 16 projects; drop plans if
+under ~70% of activities parse cleanly; if they pass, test (a) duration cleanliness vs. the H1 join and (b) gap coverage.
+Report the numbers before any model use.
+
+**Text-export check [M] (local, before the real test):** the `.txt` versions are **not usable**. Dates and amounts wrap
+across lines (`2016-09-0` … `6`), the rightmost column, where signing dates sit, is cut off (up to 72 truncated dates per
+plan), and reference formats vary by country. P132775's "latest plan" is a 48 MB text of a repeated pre-STEP "Sample
+Procurement Plan" template. **The real test therefore parses the PDFs with `ai_parse_document`:**
+`notebooks/02_procplan_test.py` (results pending).
+
+**Bonus signal [V]:** one India plan shows an activity described as "Rebidding-…" with status "Canceled". Plans may
+carry the re-tender/cancellation labels that structured data lacks (H2).
+
 ## 7. Original decision list (for reference)
 
 1. **Demo countries:** Option A (India, China, Madagascar, Sri Lanka, Mali) or **Option B (recommended):** India,
