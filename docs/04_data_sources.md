@@ -94,25 +94,60 @@ model.
 
 ---
 
-## 4. Workspace checks still open
+## 4. Workspace checks (from `notebooks/00_verify_workspace.py`, run by the user on 2026-10-20)
 
-These can only be run inside Databricks: run `notebooks/00_verify_workspace.py` and paste back its summary.
-
-| Check | Already known | Notebook confirms |
+| Check | Result | Label |
 |---|---|---|
-| Foundation Model endpoints | READY [V, via CLI on 2026-10-19] | Embedding dimension = 1024 |
-| Vector Search endpoints | 0 exist [V] | Same, inside the workspace |
-| `ai_parse_document` on Free Edition | unknown [A] | Available or not (input to D6) |
-| Create catalog `procurement` | unknown [A] | Metastore privileges (D3) |
-| Databricks Apps | unknown [A] | Feature enabled |
+| Foundation Model endpoints | Llama 3.3 70B **READY**, GTE-large **READY** | [V] |
+| Embedding dimension | **1024** | [V] |
+| Vector Search endpoints | **none exist** (precondition for D4 met) | [V] |
+| `ai_parse_document` on Free Edition | **AVAILABLE** (function exists; whether it parses well is the D6 benchmark in Stage 3) | [V] |
+| Create catalog `procurement` | **Inconclusive.** No metastore grant names the user directly. A grant could still come through a group or ownership, which this check doesn't see. | [A] |
+| Databricks Apps | **Enabled.** One app already exists: `wbintelligence2` (earlier project). | [V] |
+
+Follow-ups [P]:
+- **Catalog:** Stage 3's first cell runs `CREATE CATALOG IF NOT EXISTS procurement`. If it fails with a permission
+  error, the notebook falls back to schemas in `workspace` (D3), and I update CLAUDE.md.
+- **Apps:** Free Edition may cap the number of apps [A]. If creating our app is refused in Stage 7, the options are to
+  reuse or replace `wbintelligence2` (your decision) or to demo from a notebook.
 
 ---
 
-## 5. Decisions needed at checkpoint (b)
+## 5. Checkpoint (b) decisions: answered 2026-10-20 [V]
+
+1. **Countries: Option B.** Lending types [V, World Bank country API, current classification]: India **IBRD**, China
+   **IBRD**, Mali **IDA**, Albania **IBRD**, Sri Lanka **IDA**. That is 2 IDA countries, which meets the rule, so **no
+   swap is needed**. Caveat [M]: Sri Lanka is IDA today, but its CPIA coverage for 2012–2025 is only 9/14 years (Mali
+   14/14). Slice = **16 qualifying projects** (India 7, China 4, Mali 2, Albania 2, Sri Lanka 1); 28 road projects (≥25%)
+   in these countries in any status.
+2. **Duration target: approved** as in §3 H1. Negative durations are dropped as data errors and counted; prior-review
+   and post-review results are reported separately; the model is stated to be mainly valid for prior-review contracts.
+3. **Procurement Plans:** approved *if structured*. Format and coverage are reported in §6 below, for your decision.
+4. **Parser benchmark (D6):** `notebooks/01_parser_benchmark.py`, ready for you to run. Results will go in
+   `docs/05_parser_benchmark.md`.
+5. **FY2017–FY2019 gap = missing data, never zero.** Recorded as a data rule in CLAUDE.md.
+
+## 6. Procurement Plans: format and coverage (demo countries) [V/M]
+
+| Item | Finding |
+|---|---|
+| Where | Documents & Reports API, doc type `Procurement Plan`, filter `proid=` [V] |
+| Coverage | **16 / 16** slice projects have plans; **576** plan versions in total (7–122 per project), dated 2000–2024 [M] |
+| Format | **Machine-generated, not scanned.** ~95% have report number `STEP…` (exported from STEP); **100% have a plain-text version** (`txturl`) besides the PDF [M] |
+| Structure | **Semi-structured, not structured data.** Narrative policy text (methods, prior-review thresholds), then a very wide fixed-width table per category: *Activity Reference No.*, method, market approach, estimated/actual amount, and **Planned / Actual dates for each process step** (bid documents, bid opening, evaluation report, contract signing) [V, one plan inspected]. Column headers are truncated in the text ("Market Approac", "Estimated Am"). |
+| Versions | Each version is a revised snapshot of the same plan, so the latest version per project holds the most actual dates [A] |
+| Value | Planned vs. actual dates per activity give a **direct schedule-slippage measure** (L1/L3). Actual step dates could also give a **better tender-duration target than H1**, and plans dated 2016–2020 may partly cover the FY2017–FY2019 contract gap [A, to test]. |
+| Cost to use | Needs a parser for the fixed-width tables (text, or pdfplumber tables on the PDF). Moderate effort. |
+
+**Your call [P]:** the plans are not scanned, but they are also not structured data, so strictly they fall short of
+"structured". My recommendation is to **use them**: parse only the **latest version per slice project** (16
+documents), measure the parse success rate, and fall back to "not used" if under ~70% of activities parse cleanly.
+
+## 7. Original decision list (for reference)
 
 1. **Demo countries:** Option A (India, China, Madagascar, Sri Lanka, Mali) or **Option B (recommended):** India,
    China, Mali, Albania, Sri Lanka. Then I record the choice and the rule in CLAUDE.md.
 2. **Duration-model target:** accept the H1 result. Train on matched contracts with sanity filters, report prior-review
    and post-review results separately.
 3. **Procurement Plans:** add them as a source for planned-vs-actual schedule slippage (L1/L3)?
-4. **Run `notebooks/00_verify_workspace.py`** and paste the output, so the open checks in §4 can be marked verified.
+4. ~~Run `notebooks/00_verify_workspace.py`~~: done (§4).
