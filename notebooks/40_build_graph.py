@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 40 — Knowledge graph as Delta tables: `gold.nodes`, `gold.edges` (Stage 3)
 # MAGIC

@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 20 — Documents: metadata → PDFs → parse once → section-aware chunks (Stage 3)
 # MAGIC

@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 01 — PDF parser benchmark: `ai_parse_document` vs `pdfplumber` (decision D6)
 # MAGIC
