@@ -173,7 +173,52 @@ cell (§9 of the notebook, no new parsing) is added to fix the mapping from evid
 
 Checker in `src/procplan/check.py`, 7 unit tests passing locally; notebook §10 re-runs the gate on the stored parse.
 **Stop rule:** if the re-run is still below 70%, Procurement Plans are dropped and the reason recorded here.
-**Status: re-run pending.**
+
+**Gate re-run result (2026-10-20) [M]: PASSED, 572 / 765 clean = 74.8%** (plan coverage 13/16; P132775 skipped at
+4,028 pages; P160505 and P155522 yielded no activity tables). Failure reasons: no method 143, no dates 29, no ref 12,
+no status 8, bad date 1 (down from 285: the date reader works).
+
+Caveats [M] (the pass is real but the margin is thin):
+- **False "clean" rows exist:** in P147864 a table's header row merged into the first activity row (ref = "Activity
+  Reference No.", cells shifted by 13). At most about one per table; even 20 such rows would leave the rate at ~72%.
+  Their mapped dates are unreliable.
+- **Mali contributes nothing:** P151449 has 45 activities, 0 clean (most of the 143 "no method"); P160505 has no tables.
+  Likely cause [A]: French-language plans versus an English method list. So plan data covers only one of the two IDA
+  countries (Sri Lanka).
+- **Skewed:** India provides ~64% of clean activities (~365 of 572).
+- **Small duration sample:** 158 clean activities have an actual signing date; **97** have both signing and notice dates.
+- One mapped "signing actual" is in the future (2027-12-14, P143751), so the signing column may sometimes be another
+  step. Test (a) must check plausibility.
+
+**Test (a): is the plan duration cleaner than the notice→signing join? No [M].**
+
+| Same 16 projects | Plan dates (actual signing − actual notice) | Notice→signing join (H1 method) |
+|---|---|---|
+| Prior review | n=25 · negative 8.0% · >3y 8.0% · median 569 d | n=20 · negative 0.0% · >3y 0.0% · median 209 d |
+| Post review | n=68 · negative 2.9% · >3y 4.4% · median 439 d | n=687 · negative 12.2% · >3y 0.0% · median 81 d |
+
+- **Cross-check:** for 35 plan activities matched by reference to DS00005 contracts, the signing dates agree within
+  7 days in only **20%** of cases. The column read as "signing actual" is usually **not** the contract signing date.
+- Plan medians are 2–5× the join's, which fits a later step (e.g. contract completion) being read as signing [A].
+  This matches the future "actual" date (2027-12-14) noted above.
+- For prior-review contracts, the scope where the duration model is valid, the join is cleaner on every measure.
+
+**Test (b): FY2017–FY2019 gap coverage: unverified [M].** 53 of 138 clean activities with a signing date fall in
+FY2017–19 (Prior 10, Post 43), from 7 projects (P121185, P143751, P144726, P145778, P147864 India; P132621 China;
+P132833 Sri Lanka). They use the same signing column that agrees with DS00005 only 20% of the time, so **53 is an
+unverified upper bound**, not coverage. None come from Mali.
+
+**Decision (2026-10-21) [V]: approved.** Plan dates are dropped from all models and from gap filling. Plans are kept
+as retrieval documents (tender design and planning) and as a source of cancellation and re-bid labels, using **status
+and description values only**.
+
+**Recommendation that was approved:**
+- **Not used** for the duration target or to fill the FY2017–19 gap. The gap stays missing data (CLAUDE.md data rule).
+- **Used** for two roles that don't depend on dates: (1) retrieval documents for L2/L1 (planned packages, methods,
+  market approach, prior-review thresholds); (2) a **cancellation / re-bid label source** for H2 (status found by value;
+  "Canceled" and "Rebidding" seen in the diagnostics).
+- Fixing the signing-column mapping (mapping step columns by their position in the STEP header) is **future work** in the
+  proposal. No further debugging pass (stop rule).
 
 **Bonus signal [V]:** one India plan shows an activity described as "Rebidding-…" with status "Canceled". Plans may
 carry the re-tender/cancellation labels that structured data lacks (H2).
