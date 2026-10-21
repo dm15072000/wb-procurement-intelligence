@@ -31,8 +31,16 @@ B, S, G, O = (f"{CATALOG}.{x}" for x in ("bronze", "silver", "gold", "ops"))
 SLICE = ["P147864", "P163239", "P157054", "P160505", "P155522", "P151449", "P153548", "P132833",
          "P144726", "P143751", "P132775", "P132621", "P132982", "P145778", "P129401", "P121185"]
 
+dup_report = {}
+
 def records(table):
-    return [json.loads(r.record_json) for r in spark.table(f"{B}.{table}").select("record_json").collect()]
+    """Bronze records with EXACT duplicates removed (and counted). Paging through a source that changes during the
+    download (DS00005 updates daily) can return the same record on two pages. Stage 2 saw 22,729 project rows but only
+    22,589 distinct project IDs. A duplicated supplier row would double a contract's amount, so this matters."""
+    raw = [r.record_json for r in spark.table(f"{B}.{table}").select("record_json").collect()]
+    uniq = list(dict.fromkeys(raw))  # keeps first occurrence, preserves order
+    dup_report[table] = {"rows": len(raw), "exact_duplicates_removed": len(raw) - len(uniq)}
+    return [json.loads(x) for x in uniq]
 
 def save(rows, table, ddl):
     """Write Python dicts to a Delta table with an explicit schema (no inference surprises)."""
@@ -55,7 +63,9 @@ countries = tf.country_rows([{}, records("countries")])
 save(countries, f"{S}.countries", "iso3 string, iso2 string, name string, region string, income_level string, lending_type string")
 iso2_to_iso3 = {c["iso2"]: c["iso3"] for c in countries if c["iso2"]}
 
-projects = [p for p in (tf.project_row(r) for r in records("projects")) if p]
+# One row per project_id: a project seen on two pages may differ slightly (updated between pages); keep the last copy.
+projects = list({p["project_id"]: p for p in (tf.project_row(r) for r in records("projects")) if p}.values())
+dup_report["projects"]["distinct_project_ids"] = len(projects)
 for p in projects:
     p["country_iso3_list"] = [iso2_to_iso3.get(c) for c in p["country_iso2_list"] if iso2_to_iso3.get(c)]
     p["in_universe"] = tf.in_universe(p)
@@ -176,4 +186,5 @@ report["disbursements"] = {"rows": len(disb), "projects": len({d["project_id"] f
 
 # COMMAND ----------
 
+report["duplicates"] = dup_report
 print(json.dumps(report, indent=2, default=str))
