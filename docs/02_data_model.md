@@ -30,7 +30,7 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 | **Tender** | `tender_key` = `{project_id}:{normalized reference}` | procurement notices + contracts | first notice date, notice types seen, n_IFB_notices | Joins notices to contracts on project ID + normalized reference number (H1 method). |
 | **ProcurementNotice** | `notice_id` (`OP…`) [V] | procnotices API [V] | type, notice date, status, bid reference no., description, procurement group, method code, notice text | Notice text is a retrieval document for L2 (past scope, qualification criteria). |
 | **Document** | `doc_id` (WDS id) [V] | Documents & Reports API [V] | project_id, doc type, doc date, url, language | Types: PAD, ISR, ICR, ICR Review (IEG), PPAR, CPF, Procurement Plan. |
-| **Section / Chunk** | `section_id`, `chunk_id` (doc_id + sequence) | `ai_parse_document` output (stored once) | heading path, chunk type (text / table / mixed), page range, text, `text_hash`, `table_part` ("k/n"), `merged_sections`, `is_duplicate` | Section-aware chunking (M1.5). Quality pass after run 1 (median 53 tokens): small pieces merge within a section or sibling sections (headings kept in text); tables over 800 tokens split into row groups with the header repeated; exact repeats within a project flagged, not deleted. |
+| **Section / Chunk** | `section_id`, `chunk_id` (doc_id + sequence) | `ai_parse_document` output (stored once) | heading path, chunk type (text / table / mixed), page range, text, `text_hash`, `table_part` ("k/n"), `merged_sections`, `dup_group`, `dup_kind` (exact / near), `is_primary`, `is_duplicate` | Section-aware chunking (M1.5). Quality pass after run 1 (median 53 tokens): small pieces merge within a section or sibling sections (headings kept in text); tables over 800 tokens split into row groups with the header repeated; a hard cap of 10,000 characters keeps every chunk under the embedding model's **8,192-token** input limit (`databricks-gte-large-en`, verified in the Databricks docs). Repeats: exact (any doc type) and near (ISRs: same section, same words once numbers and dates are masked, 3-gram Jaccard ≥ 0.85). The **latest** copy is primary; older copies are kept and searchable by `doc_date`. |
 | **PlanActivityLabel** | (`project_id`, plan activity ref) | Procurement Plans (latest per slice project) | status, description, review type, method | **Labels only:** cancellation / re-bid signals from status and description values. **No dates** (decision 2026-10-21). |
 | **GovernanceObservation** | (`iso3`, `year`, `indicator`) | Indicators API: CPIA (`IQ.CPA.*`), WGI (`GOV_WGI_*`, source 3) [V] | value, is_missing | CPIA is mostly absent for IBRD countries [M]. |
 | **DisbursementSnapshot** | (`loan_or_credit_no`, `end_of_period`) | DS00975 (IBRD) / DS00976 (IDA) [V: metadata] | project_id, disbursed, undisbursed, cancelled, original principal | Monthly snapshots give the actual disbursement trajectory. |
@@ -141,7 +141,7 @@ tests had missed, now covered by regression tests: the placeholder mega-cluster 
 name-shape individual heuristic, and the dead R3 rule (0 merges under the original ID-blocking design).
 
 Code: `src/entity_resolution/suppliers.py`, `src/entity_resolution/keys.py`; tests: `tests/test_entity_resolution.py`
-(21 tests; 52 across the repo, all passing on 2026-10-21).
+(21 tests; 56 across the repo, all passing on 2026-10-21).
 
 ## 5. Missing-data handling [P]
 

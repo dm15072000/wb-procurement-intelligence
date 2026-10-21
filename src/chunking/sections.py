@@ -21,6 +21,11 @@ MAX_TOKENS = 900
 OVERLAP_TOKENS = 60
 MIN_TOKENS = 150          # chunks smaller than this get merged with neighbours where the structure allows
 TABLE_SPLIT_TOKENS = 800  # tables larger than this are split into row groups (header repeated)
+# Embedding model limit: databricks-gte-large-en reads 8,192 tokens (verified, Databricks docs, 2026-10-21). Our token
+# count is an ESTIMATE (words x 1.3) and numbers tokenize worse than words, so a hard character cap is the safety net:
+# even at a pessimistic ~1.25 characters per token, 10,000 characters stays under 8,192 tokens.
+EMBED_TOKEN_LIMIT = 8192
+MAX_CHARS = 10_000
 _ROMAN = re.compile(r"^(?=[IVXLC]+\.)[IVXLC]+\.\s")
 _NUMBERED = re.compile(r"^(\d+(?:\.\d+)*)[.)]?\s")
 _LETTER = re.compile(r"^[A-Z][.)]\s")
@@ -160,7 +165,7 @@ def chunk_document(elements, doc_meta):
                 final.append(dict(ch, text=" ".join(part), n_tokens=est_tokens(" ".join(part))))
         else:
             final.append(ch)
-    final = merge_small(split_large_tables(final))
+    final = enforce_char_cap(merge_small(split_large_tables(final)))
     for i, ch in enumerate(final):
         ch["seq"], ch["chunk_id"] = i, f"{doc_meta['doc_id']}-{i:04d}"
         ch["text_hash"] = text_hash(ch["text"])
@@ -191,6 +196,26 @@ def split_large_tables(chunks):
         for k, g in enumerate(groups, 1):
             text = "\n".join([header] + g)
             out.append(dict(ch, text=text, n_tokens=est_tokens(text), table_part=f"{k}/{len(groups)}"))
+    return out
+
+
+def enforce_char_cap(chunks, max_chars=MAX_CHARS):
+    """Last safety net for the embedding limit: any chunk longer than max_chars (e.g. one enormous table row, or text
+    with no sentence breaks) is cut at line or space boundaries into pieces <= max_chars. Labelled in table_part."""
+    out = []
+    for ch in chunks:
+        if len(ch["text"]) <= max_chars:
+            out.append(ch)
+            continue
+        pieces, rest = [], ch["text"]
+        while len(rest) > max_chars:
+            cut = max(rest.rfind("\n", 0, max_chars), rest.rfind(" ", 0, max_chars))
+            cut = cut if cut > max_chars // 2 else max_chars
+            pieces.append(rest[:cut].strip())
+            rest = rest[cut:].strip()
+        pieces.append(rest)
+        for k, p in enumerate(pieces, 1):
+            out.append(dict(ch, text=p, n_tokens=est_tokens(p), table_part=f"cap {k}/{len(pieces)}"))
     return out
 
 

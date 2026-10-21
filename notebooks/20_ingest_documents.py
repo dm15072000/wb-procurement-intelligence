@@ -85,13 +85,22 @@ for pid in SLICE:
     rows = [r for r in rows if r["doc_type"] != "Procurement Plan"] + ([latest_plan] if latest_plan else [])
     docs += rows
 
-for country in SLICE_COUNTRIES:   # latest Country Partnership Framework per country (policy context)
-    cpf = []
-    for batch in http.search_pages("wds", {"docty_exact": "Country Partnership Framework", "count_exact": country, "fl": FL},
-                                   list_key="documents", pause=0.7):
-        cpf += [meta(v, None) for v in batch if v.get("pdfurl")]
-    if cpf:
-        docs.append(dict(max(cpf, key=lambda r: r["doc_date"] or datetime.min.date()), country=country))
+def latest_cpf(country):
+    """Latest Country Partnership Framework for a country. Verified 2026-10-21: India's (FY18-22) and Mali's (FY16-19)
+    CPFs are filed under doc type 'Country Assistance Strategy Document', not 'Country Partnership Framework', so both
+    types are searched and titles saying 'Partnership Framework' are preferred."""
+    found = []
+    for docty in ("Country Partnership Framework", "Country Assistance Strategy Document"):
+        for batch in http.search_pages("wds", {"docty_exact": docty, "count_exact": country, "fl": FL},
+                                       list_key="documents", pause=0.7):
+            found += [meta(v, None) for v in batch if v.get("pdfurl")]
+    cpf = [d for d in found if "partnership framework" in d["title"].lower()] or found
+    return dict(max(cpf, key=lambda r: r["doc_date"] or datetime.min.date()), country=country) if cpf else None
+
+for country in SLICE_COUNTRIES:   # latest CPF per country (policy context)
+    c = latest_cpf(country)
+    if c:
+        docs.append(c)
 
 docs = list({d["doc_id"]: d for d in docs}.values())   # de-duplicate (a doc can list several projects)
 for d in docs:
@@ -197,6 +206,67 @@ print("parse status:", dict(errors))
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### 3d. CPF top-up: add the missing countries' CPFs only (run once)
+# MAGIC Run 1 found CPFs for only 3 of 5 countries. Cause (verified): India's and Mali's CPFs are filed under doc type
+# MAGIC "Country Assistance Strategy Document". This cell finds the missing ones, adds them to `docs.documents`, and
+# MAGIC downloads and parses **only those** (about 2 documents of `ai_parse_document` quota). It needs only the setup
+# MAGIC cells; sections 1–3 don't have to be re-run.
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+import time
+from pypdf import PdfReader
+FL = "id,docty,docdt,pdfurl,display_title,lang,repnb"
+def meta(v, project_id):
+    return {"doc_id": str(v.get("id")), "project_id": project_id, "doc_type": v.get("docty"),
+            "doc_date": keys.parse_date((v.get("docdt") or "")[:10]), "pdf_url": v.get("pdfurl"),
+            "title": re.sub(r"\s+", " ", v.get("display_title") or "").strip(), "language": v.get("lang"),
+            "report_no": v.get("repnb")}
+
+def latest_cpf(country):   # same logic as section 1 (both doc types; prefer 'Partnership Framework' titles)
+    found = []
+    for docty in ("Country Partnership Framework", "Country Assistance Strategy Document"):
+        for batch in http.search_pages("wds", {"docty_exact": docty, "count_exact": country, "fl": FL},
+                                       list_key="documents", pause=0.7):
+            found += [meta(v, None) for v in batch if v.get("pdfurl")]
+    cpf = [d for d in found if "partnership framework" in d["title"].lower()] or found
+    return dict(max(cpf, key=lambda r: r["doc_date"] or datetime.min.date()), country=country) if cpf else None
+
+have = {r.country for r in spark.table(f"{D}.documents").where("country IS NOT NULL").select("country").collect()}
+missing_countries = [c for c in SLICE_COUNTRIES if c not in have]
+new_cpfs = [c for c in (latest_cpf(x) for x in missing_countries) if c]
+print("CPF countries before:", sorted(have), "| missing:", missing_countries,
+      "| found:", [(c["country"], str(c["doc_date"]), c["title"][:60]) for c in new_cpfs])
+if new_cpfs:
+    # The new CPF's doc type is recorded as found (e.g. "Country Assistance Strategy Document"); the title says CPF.
+    spark.createDataFrame(new_cpfs, "doc_id string, project_id string, doc_type string, doc_date date, pdf_url string, "
+                          "title string, language string, report_no string, country string") \
+         .write.mode("append").saveAsTable(f"{D}.documents")
+    parsed_ids = {r.doc_id for r in spark.table(f"{D}.parsed").select("doc_id").collect()}
+    paths = []
+    for c in new_cpfs:
+        path = f"{PDF_DIR}/{c['doc_id']}.pdf"
+        if not os.path.exists(path):
+            with open(path + ".tmp", "wb") as fh:
+                fh.write(http.get(c["pdf_url"], as_json=False, pause=1.0))
+            os.replace(path + ".tmp", path)
+        n_pages = len(PdfReader(path).pages)
+        print(c["country"], c["doc_id"], n_pages, "pages")
+        if c["doc_id"] not in parsed_ids and n_pages <= MAX_PAGES:
+            paths.append(path)
+    if paths:
+        t0 = time.perf_counter()
+        (spark.read.format("binaryFile").load(paths)
+              .select(F.regexp_extract("path", r"([^/]+)\.pdf$", 1).alias("doc_id"),
+                      F.expr("to_json(ai_parse_document(content))").alias("parsed"))
+              .withColumn("parser", F.lit("ai_parse_document")).withColumn("parsed_at", F.current_timestamp())
+              .write.mode("append").saveAsTable(f"{D}.parsed"))
+        print(f"parsed {len(paths)} CPF(s) in {time.perf_counter() - t0:.0f}s")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 4. Section-aware chunks → `docs.chunks` (and `docs.sections`)
 # MAGIC Every chunk keeps: its section path, its pages, and a context header `[doc type | project | date] path`. The
 # MAGIC header is used at embedding time (Stage 5) and in citations.
@@ -225,19 +295,22 @@ for r in spark.table(f"{D}.parsed").select("doc_id", "parsed").toLocalIterator()
         ch.update({"project_id": m["project_id"], "doc_type": m["doc_type"], "doc_date": m["doc_date"]})
         chunks.append(ch)
 
-# Exact repeats: within each project, the first occurrence (oldest document, then position) is kept as original;
-# later chunks with the same text fingerprint are flagged is_duplicate (nothing is deleted).
-seen, dup_by_type = set(), Counter()
-for ch in sorted(chunks, key=lambda c: (c["project_id"] or "", str(c["doc_date"]), c["doc_id"], c["seq"])):
-    k = (ch["project_id"], ch["text_hash"])
-    ch["is_duplicate"] = k in seen
-    seen.add(k)
-    dup_by_type[ch["doc_type"]] += ch["is_duplicate"]
+# Exact repeats (any doc type) and near repeats (ISRs: same project + section, ~same words once numbers and dates are
+# masked). In each group the LATEST document's copy is primary; older copies are flagged, NOT deleted, so they stay
+# searchable by doc_date ("what did the ISR say in 2019?"). Logic + tests: src/chunking/dedup.py.
+import src.chunking.dedup as dd
+importlib.reload(dd)
+dd.flag_repeats(chunks)
+dup_by_type = Counter((c["doc_type"], c["dup_kind"]) for c in chunks if c["is_duplicate"])
+
+# Embedding-limit check: databricks-gte-large-en reads 8,192 tokens; the chunker's hard cap is cs.MAX_CHARS characters.
+too_long = [c["chunk_id"] for c in chunks if len(c["text"]) > cs.MAX_CHARS]
+assert not too_long, f"chunks over the {cs.MAX_CHARS}-character embedding safety cap: {too_long[:5]}"
 
 spark.createDataFrame(chunks, "chunk_id string, doc_id string, seq int, chunk_type string, section_path string, "
                       "text string, context_header string, page_start int, page_end int, n_tokens int, "
-                      "text_hash string, table_part string, merged_sections int, is_duplicate boolean, "
-                      "project_id string, doc_type string, doc_date date") \
+                      "text_hash string, table_part string, merged_sections int, dup_group string, dup_kind string, "
+                      "is_primary boolean, is_duplicate boolean, project_id string, doc_type string, doc_date date") \
      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{D}.chunks")
 spark.sql(f"""CREATE OR REPLACE TABLE {D}.sections AS
               SELECT doc_id, section_path, min(seq) AS first_chunk_seq, count(*) AS n_chunks,
@@ -259,7 +332,12 @@ chunk_report = {
     "chunks_from_split_tables": sum(1 for c in chunks if c["table_part"]),
     "tables_split": len({(c["doc_id"], c["section_path"], c["page_start"]) for c in chunks if c["table_part"]}),
     "chunks_with_merged_sections": sum(1 for c in chunks if c["merged_sections"] > 1),
-    "duplicates": {"total": sum(c["is_duplicate"] for c in chunks), "by_doc_type": dict(dup_by_type)},
+    "duplicates": {"exact": sum(c["dup_kind"] == "exact" for c in chunks),
+                   "near_isr": sum(c["dup_kind"] == "near" for c in chunks),
+                   "primary_chunks": sum(c["is_primary"] for c in chunks),
+                   "by_doc_type_and_kind": {f"{t} | {k}": n for (t, k), n in dup_by_type.most_common()}},
+    "max_chars": max(len(c["text"]) for c in chunks), "embed_char_cap": cs.MAX_CHARS,
+    "max_est_tokens_vs_limit": [max(c["n_tokens"] for c in chunks), cs.EMBED_TOKEN_LIMIT],
     "chunks_without_section": sum(1 for c in chunks if not c["section_path"]),
     "by_doc_type": dict(Counter(c["doc_type"] for c in chunks)),
 }
@@ -295,7 +373,7 @@ import src.procplan.check as ck
 importlib.reload(ck)
 REBID = re.compile(r"\bre-?bid(ding)?\b|\bre-?tender(ing)?\b|\bre-?advertis", re.I)
 plan_ids = {d["doc_id"]: d["project_id"] for d in docs if d["doc_type"] == "Procurement Plan"}
-labels, header_rows, detected = [], 0, 0
+labels, header_rows, detected, now_rows = [], 0, 0, []
 for r in spark.table(f"{D}.parsed").where(F.col("doc_id").isin(list(plan_ids))).select("doc_id", "parsed").collect():
     for el in cs.elements_from_parse(r.parsed):
         if el["type"] != "table":
@@ -305,6 +383,7 @@ for r in spark.table(f"{D}.parsed").where(F.col("doc_id").isin(list(plan_ids))).
                 continue
             detected += 1
             rec = ck.check_row(row)
+            now_rows.append({"pid": plan_ids[r.doc_id], "ref": rec["ref"], "reason": rec["reason"], "cells": row})
             if rec["reason"] != "clean":
                 continue
             if rec["ref"].lower().startswith("activity reference"):
@@ -321,6 +400,54 @@ label_report = {"plan_rows_detected": detected, "clean_used": len(labels), "excl
                 "cancelled": sum(l["is_cancelled"] for l in labels), "mentions_rebid": sum(l["mentions_rebid"] for l in labels),
                 "by_project": dict(Counter(l["project_id"] for l in labels))}
 print(json.dumps(label_report, indent=2))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 5b. Why 543 here vs ~562 at the gate (notebook 02)? Row-by-row comparison, no new parsing
+# MAGIC The gate run saved its verdict for every plan row (`activities_v2.json`). This matches each gate row to the same
+# MAGIC row now (same project, same reference, in order) and counts how verdicts changed, per project, with examples.
+# MAGIC Known by design: 10 merged-header rows ("Activity Reference No.") are excluded here but counted clean at the gate.
+
+# COMMAND ----------
+
+GATE_FILE = f"/Volumes/{CATALOG}/bronze/raw_files/procplan_test/activities_v2.json"
+if os.path.exists(GATE_FILE):
+    gate_rows = json.load(open(GATE_FILE))
+    gate_by = defaultdict(list)
+    for g in gate_rows:
+        gate_by[(g["pid"], g["ref"])].append(g["reason"])
+    now_by = defaultdict(list)
+    for n in now_rows:
+        now_by[(n["pid"], n["ref"])].append(n)
+    transitions, examples = Counter(), []
+    for k in set(gate_by) | set(now_by):
+        gs, ns = gate_by.get(k, []), now_by.get(k, [])
+        for i in range(max(len(gs), len(ns))):
+            before = gs[i] if i < len(gs) else "<absent at gate>"
+            after = ns[i]["reason"] if i < len(ns) else "<absent now>"
+            if before != after:
+                transitions[(k[0], before, after)] += 1
+                if len(examples) < 12:
+                    examples.append({"project": k[0], "ref": k[1], "gate": before, "now": after,
+                                     "cells_now": [c for c in (ns[i]["cells"] if i < len(ns) else []) if c][:12]})
+    gate_clean = Counter(g["pid"] for g in gate_rows if g.get("reason") == "clean"
+                         and not g["ref"].lower().startswith("activity reference"))
+    now_clean = Counter(n["pid"] for n in now_rows if n["reason"] == "clean"
+                        and not n["ref"].lower().startswith("activity reference"))
+    diff_report = {
+        "gate_rows": len(gate_rows), "now_rows": len(now_rows),
+        "gate_clean_excl_header": sum(gate_clean.values()), "now_clean_excl_header": sum(now_clean.values()),
+        "per_project_gate_vs_now": {p: [gate_clean.get(p, 0), now_clean.get(p, 0)]
+                                    for p in sorted(set(gate_clean) | set(now_clean)) if gate_clean.get(p, 0) != now_clean.get(p, 0)},
+        "verdict_changes (project, gate -> now)": {f"{p}: {a} -> {b}": n for (p, a, b), n in transitions.most_common(20)},
+    }
+    print(json.dumps(diff_report, indent=2, default=str))
+    print("\nexamples:")
+    for e in examples:
+        print(json.dumps(e, ensure_ascii=False)[:600])
+else:
+    print("gate file not found:", GATE_FILE)
 
 # COMMAND ----------
 

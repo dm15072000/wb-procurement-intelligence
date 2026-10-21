@@ -291,3 +291,59 @@ def test_text_hash_flags_exact_repeats():
     from src.chunking.sections import text_hash
     assert text_hash("Rating:  Satisfactory") == text_hash("rating: satisfactory")
     assert text_hash("Rating: Satisfactory") != text_hash("Rating: Unsatisfactory")
+
+
+# --- duplicates: latest primary, older searchable by date -------------------------------------------------------------
+
+ISR = "Implementation Status and Results Report"
+
+
+def _ck(cid, doc, date_, text, section="RATINGS", doc_type=ISR, pid="P1"):
+    return {"chunk_id": cid, "doc_id": doc, "project_id": pid, "doc_type": doc_type, "doc_date": date_,
+            "section_path": section, "text": text}
+
+
+RATING_2019 = ("Progress towards achievement of PDO: Moderately Satisfactory. Overall implementation progress: "
+               "Moderately Satisfactory. Rating as of 12 March 2019 for the road works component in five districts.")
+RATING_2020 = RATING_2019.replace("12 March 2019", "03 September 2020")
+
+
+def test_near_duplicate_isr_latest_is_primary_older_kept():
+    from src.chunking.dedup import flag_repeats
+    cs_ = [_ck("a", "ISR-2019", date(2019, 3, 12), RATING_2019), _ck("b", "ISR-2020", date(2020, 9, 3), RATING_2020)]
+    flag_repeats(cs_)
+    old, new = cs_
+    assert new["is_primary"] and not new["is_duplicate"]
+    assert old["is_duplicate"] and old["dup_kind"] == "near" and old["dup_group"] == "b"   # points to the latest
+    assert old["doc_date"] == date(2019, 3, 12) and "12 March 2019" in old["text"]         # kept, searchable by date
+
+
+def test_exact_duplicates_any_doc_type_and_distinct_text_untouched():
+    from src.chunking.dedup import flag_repeats
+    cs_ = [_ck("a", "PAD", date(2015, 1, 1), "Same paragraph.", doc_type="Project Appraisal Document"),
+           _ck("b", "PP", date(2018, 1, 1), "Same paragraph.", doc_type="Project Paper"),
+           _ck("c", "ISR-1", date(2019, 1, 1), "Procurement is delayed for package 3 due to re-bidding."),
+           _ck("d", "ISR-2", date(2020, 1, 1), "Disbursement reached 60 percent after the restructuring.")]
+    flag_repeats(cs_)
+    by = {c["chunk_id"]: c for c in cs_}
+    assert by["a"]["dup_kind"] == "exact" and by["a"]["dup_group"] == "b" and by["b"]["is_primary"]
+    assert by["c"]["is_primary"] and by["d"]["is_primary"]                # different ISR text: not near-dups
+
+
+def test_near_duplicates_only_for_isrs_and_same_section():
+    from src.chunking.dedup import flag_repeats
+    # PADs in their own project, so the identical text in the ISRs below isn't an (expected) exact duplicate of them.
+    pads = [_ck("a", "PAD1", date(2015, 1, 1), RATING_2019, doc_type="Project Appraisal Document", pid="P2"),
+            _ck("b", "PAD2", date(2016, 1, 1), RATING_2020, doc_type="Project Appraisal Document", pid="P2")]
+    other_section = [_ck("c", "ISR-1", date(2019, 1, 1), RATING_2019, section="RATINGS"),
+                     _ck("d", "ISR-2", date(2020, 1, 1), RATING_2020, section="KEY ISSUES")]
+    flag_repeats(pads + other_section)
+    assert all(c["is_primary"] for c in pads + other_section)
+
+
+def test_char_cap_keeps_every_chunk_under_the_embedding_limit():
+    from src.chunking.sections import MAX_CHARS, enforce_char_cap
+    long_row = "Contract | " + "54,431,569.00 " * 2000            # one enormous table row, numbers only
+    out = enforce_char_cap([{"text": long_row, "n_tokens": 0, "chunk_type": "table"}])
+    assert len(out) > 1 and all(len(c["text"]) <= MAX_CHARS for c in out)
+    assert "".join(c["text"] for c in out).replace(" ", "") == long_row.replace(" ", "")
