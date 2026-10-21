@@ -198,12 +198,14 @@ def test_chunking_keeps_sections_tables_and_drops_boilerplate():
            _el("table", "<table><tr><td>Rating</td><td>Moderately Satisfactory</td></tr></table>", 21),
            _el("page_number", "21", 21), _el("text", "Second lesson.", 21)]
     ch = chunk_document(els, meta)
-    assert [c["chunk_type"] for c in ch] == ["text", "table", "text"]
+    # The three tiny pieces share one section, so they merge into one chunk (quality pass); nothing is lost.
+    assert len(ch) == 1 and ch[0]["chunk_type"] == "mixed"
     assert ch[0]["section_path"] == "V. LESSONS AND RECOMMENDATIONS > Procurement"
-    assert "Rating | Moderately Satisfactory" in ch[1]["text"] and ch[1]["page_start"] == 21
-    assert all("Report No" not in c["text"] and c["text"] != "21" for c in ch)
+    assert "Re-tendering delayed works" in ch[0]["text"] and "Rating | Moderately Satisfactory" in ch[0]["text"]
+    assert "Second lesson." in ch[0]["text"] and (ch[0]["page_start"], ch[0]["page_end"]) == (20, 21)
+    assert "Report No" not in ch[0]["text"] and "\n21\n" not in ch[0]["text"]
     assert ch[0]["context_header"].startswith("[ICR | P147864 | 2024-12-23]")
-    assert [c["chunk_id"] for c in ch] == ["D1-0000", "D1-0001", "D1-0002"]
+    assert ch[0]["chunk_id"] == "D1-0000" and ch[0]["text_hash"]
 
 
 def test_chunking_respects_size_with_overlap():
@@ -242,3 +244,50 @@ def test_precomputed_chunk_features_give_same_score():
     from src.graph.links import chunk_features
     ch = _chunk("GAWAR CONSTRUCTION delayed IN-UPPWD-14106-CW-RFB works at Badaun Bijnaur.")
     assert link_score(CONTRACT, dict(ch, **chunk_features(ch)), ["GAWAR CONSTRUCTION"]) ==            link_score(CONTRACT, ch, ["GAWAR CONSTRUCTION"])
+
+
+# --- chunk quality pass (run 1 on real data: median 53 tokens, tables up to ~5,300 tokens) ---------------------------
+
+def _meta(doc_id="D9"):
+    return {"doc_id": doc_id, "project_id": "P1", "doc_type": "ISR", "doc_date": "2020-01-01"}
+
+
+def test_small_sibling_sections_merge_but_top_levels_do_not():
+    els = [_el("section_header", "I. PROJECT DEVELOPMENT OBJECTIVES"), _el("section_header", "A. PDO", 1),
+           _el("text", "Improve rural road access.", 1), _el("section_header", "B. Key results", 1),
+           _el("text", "Travel time reduced.", 1), _el("section_header", "II. IMPLEMENTATION", 2),
+           _el("text", "Works delayed by rains.", 2)]
+    ch = chunk_document(els, _meta())
+    assert len(ch) == 2                                       # A + B merged; II stays separate (other top level)
+    assert "Improve rural road access." in ch[0]["text"] and "[B. Key results]" in ch[0]["text"]
+    assert ch[0]["merged_sections"] == 2 and ch[1]["section_path"] == "II. IMPLEMENTATION"
+
+
+def test_small_table_and_text_in_same_section_become_mixed():
+    els = [_el("section_header", "I. RATINGS"), _el("text", "Overall ratings:", 1),
+           _el("table", "<table><tr><td>Progress</td><td>Moderately Satisfactory</td></tr></table>", 1)]
+    ch = chunk_document(els, _meta())
+    assert len(ch) == 1 and ch[0]["chunk_type"] == "mixed"
+
+
+def test_large_table_split_with_header_repeated():
+    rows = "".join(f"<tr><td>Contract {i}</td><td>{'word ' * 30}</td></tr>" for i in range(60))
+    html = "<table><tr><th>Package</th><th>Description</th></tr>" + rows + "</table>"
+    ch = chunk_document([_el("section_header", "ANNEX 2. PROCUREMENT"), _el("table", html, 40)], _meta())
+    parts = [c for c in ch if c["table_part"]]
+    assert len(parts) >= 3 and parts[0]["table_part"] == f"1/{len(parts)}"
+    assert all(c["text"].startswith("Package | Description") for c in parts)
+    assert all(c["n_tokens"] <= 800 for c in parts)
+    body = [l for c in parts for l in c["text"].split("\n")[1:]]
+    assert len(body) == 60                                    # every row kept exactly once
+
+
+def test_table_separators_do_not_count_as_tokens():
+    from src.chunking.sections import est_tokens
+    assert est_tokens("a | b | c") == est_tokens("a b c")
+
+
+def test_text_hash_flags_exact_repeats():
+    from src.chunking.sections import text_hash
+    assert text_hash("Rating:  Satisfactory") == text_hash("rating: satisfactory")
+    assert text_hash("Rating: Satisfactory") != text_hash("Rating: Unsatisfactory")

@@ -200,9 +200,19 @@ print("parse status:", dict(errors))
 # MAGIC ## 4. Section-aware chunks → `docs.chunks` (and `docs.sections`)
 # MAGIC Every chunk keeps: its section path, its pages, and a context header `[doc type | project | date] path`. The
 # MAGIC header is used at embedding time (Stage 5) and in citations.
+# MAGIC
+# MAGIC **Quality pass (added after run 1, which gave a median of 53 tokens and tables up to ~5,300 tokens):** small
+# MAGIC pieces are merged with neighbours in the same section or sibling sections (headings kept in the text); tables over
+# MAGIC 800 tokens are split into row groups with the header repeated; exact repeats (e.g. the same ISR rating table every
+# MAGIC six months) are flagged `is_duplicate`, so Stage 5 can choose whether to index them.
+# MAGIC
+# MAGIC **To re-chunk only:** run the setup cells at the top (pip, restart, imports), then from here down. Sections 1–3
+# MAGIC (API calls, parsing) are **not** needed: this reads the stored parse and `docs.documents`. **No quota is used.**
 
 # COMMAND ----------
 
+from pyspark.sql import functions as F   # also imported in section 3; repeated so a re-chunk-only run works
+docs = [r.asDict() for r in spark.table(f"{D}.documents").collect()]   # stored metadata: no API call needed
 meta_by_id = {d["doc_id"]: d for d in docs}
 chunks = []
 for r in spark.table(f"{D}.parsed").select("doc_id", "parsed").toLocalIterator():
@@ -215,8 +225,18 @@ for r in spark.table(f"{D}.parsed").select("doc_id", "parsed").toLocalIterator()
         ch.update({"project_id": m["project_id"], "doc_type": m["doc_type"], "doc_date": m["doc_date"]})
         chunks.append(ch)
 
+# Exact repeats: within each project, the first occurrence (oldest document, then position) is kept as original;
+# later chunks with the same text fingerprint are flagged is_duplicate (nothing is deleted).
+seen, dup_by_type = set(), Counter()
+for ch in sorted(chunks, key=lambda c: (c["project_id"] or "", str(c["doc_date"]), c["doc_id"], c["seq"])):
+    k = (ch["project_id"], ch["text_hash"])
+    ch["is_duplicate"] = k in seen
+    seen.add(k)
+    dup_by_type[ch["doc_type"]] += ch["is_duplicate"]
+
 spark.createDataFrame(chunks, "chunk_id string, doc_id string, seq int, chunk_type string, section_path string, "
                       "text string, context_header string, page_start int, page_end int, n_tokens int, "
+                      "text_hash string, table_part string, merged_sections int, is_duplicate boolean, "
                       "project_id string, doc_type string, doc_date date") \
      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{D}.chunks")
 spark.sql(f"""CREATE OR REPLACE TABLE {D}.sections AS
@@ -224,11 +244,22 @@ spark.sql(f"""CREATE OR REPLACE TABLE {D}.sections AS
                      min(page_start) AS page_start, max(page_end) AS page_end
               FROM {D}.chunks GROUP BY doc_id, section_path""")
 
+def pct(vals, q):
+    return vals[min(int(len(vals) * q), len(vals) - 1)] if vals else None
+
 tok = sorted(c["n_tokens"] for c in chunks)
+tab = sorted(c["n_tokens"] for c in chunks if c["chunk_type"] == "table")
 chunk_report = {
     "docs_chunked": len({c["doc_id"] for c in chunks}), "chunks": len(chunks),
+    "run1_for_comparison": {"chunks": 13085, "tokens_p50_p90_max": [53, 409, 5319]},
     "by_type": dict(Counter(c["chunk_type"] for c in chunks)),
-    "tokens_p50_p90_max": [tok[len(tok) // 2], tok[int(len(tok) * 0.9)], tok[-1]] if tok else None,
+    "tokens_p10_p50_p90_max": [pct(tok, .1), pct(tok, .5), pct(tok, .9), tok[-1] if tok else None],
+    "table_tokens_p50_max": [pct(tab, .5), tab[-1] if tab else None],
+    "share_under_150_tokens": round(sum(t < 150 for t in tok) / len(tok), 3) if tok else None,
+    "chunks_from_split_tables": sum(1 for c in chunks if c["table_part"]),
+    "tables_split": len({(c["doc_id"], c["section_path"], c["page_start"]) for c in chunks if c["table_part"]}),
+    "chunks_with_merged_sections": sum(1 for c in chunks if c["merged_sections"] > 1),
+    "duplicates": {"total": sum(c["is_duplicate"] for c in chunks), "by_doc_type": dict(dup_by_type)},
     "chunks_without_section": sum(1 for c in chunks if not c["section_path"]),
     "by_doc_type": dict(Counter(c["doc_type"] for c in chunks)),
 }
@@ -298,6 +329,11 @@ print(json.dumps(label_report, indent=2))
 
 # COMMAND ----------
 
-print(json.dumps({"documents": dict(Counter(d["doc_type"] for d in docs)), "download_failed": failed,
-                  "skipped_too_long": skipped, "parse_status": dict(errors), "chunks": chunk_report,
-                  "plan_labels": label_report, "slice_projects_without_PAD": no_pad}, indent=2, default=str))
+# Sections 2-3 values are absent on a re-chunk-only run; they were reported in the full run.
+g = globals()
+print(json.dumps({"documents": dict(Counter(d["doc_type"] for d in docs)),
+                  "download_failed": g.get("failed", "not re-run (see full run)"),
+                  "skipped_too_long": g.get("skipped", "not re-run (see full run)"),
+                  "parse_status": dict(g["errors"]) if "errors" in g else "not re-run (see full run)",
+                  "chunks": chunk_report, "plan_labels": label_report,
+                  "slice_projects_without_PAD": g.get("no_pad", "not re-run (see full run)")}, indent=2, default=str))

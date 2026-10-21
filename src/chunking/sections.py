@@ -4,9 +4,13 @@ Plain-language summary: long reports (PADs, ICRs: 40-150 pages) are cut into pie
 but cut along the document's own structure:
   * page headers, footers and page numbers are dropped (boilerplate);
   * headings start a new section, and every chunk remembers its heading path ("V. LESSONS > Procurement");
-  * tables are never split, and become their own chunk with the section path attached;
-  * text is packed into chunks of about TARGET_TOKENS, with a short overlap so a sentence at a boundary isn't lost.
+  * tables become their own chunk with the section path attached; a very large table is split into row groups, each
+    repeating the header row, so every part can be read and cited on its own;
+  * text is packed into chunks of about TARGET_TOKENS, with a short overlap so a sentence at a boundary isn't lost;
+  * pieces that are too small to be useful (run 1 on real data: median 53 tokens) are merged with their neighbours in
+    the same section, or in sibling sections under the same parent heading, keeping every heading for citation.
 """
+import hashlib
 import json
 import re
 
@@ -15,14 +19,22 @@ HEADING_TYPES = {"title", "section_header"}
 TARGET_TOKENS = 600
 MAX_TOKENS = 900
 OVERLAP_TOKENS = 60
+MIN_TOKENS = 150          # chunks smaller than this get merged with neighbours where the structure allows
+TABLE_SPLIT_TOKENS = 800  # tables larger than this are split into row groups (header repeated)
 _ROMAN = re.compile(r"^(?=[IVXLC]+\.)[IVXLC]+\.\s")
 _NUMBERED = re.compile(r"^(\d+(?:\.\d+)*)[.)]?\s")
 _LETTER = re.compile(r"^[A-Z][.)]\s")
 
 
 def est_tokens(text):
-    """Rough token estimate (~1.3 tokens per word): good enough for sizing chunks."""
-    return int(len((text or "").split()) * 1.3) + 1
+    """Rough token estimate (~1.3 tokens per word): good enough for sizing chunks. Pure-punctuation tokens such as the
+    ' | ' cell separators in table text are not counted (run 1 overstated table sizes because they were)."""
+    return int(sum(1 for w in (text or "").split() if any(ch.isalnum() for ch in w)) * 1.3) + 1
+
+
+def text_hash(text):
+    """Fingerprint of a chunk's text (case/space-insensitive), for finding exact repeats such as ISR rating tables."""
+    return hashlib.sha1(re.sub(r"\s+", " ", (text or "").lower()).strip().encode("utf-8")).hexdigest()[:16]
 
 
 def _page_of(el):
@@ -104,7 +116,8 @@ def chunk_document(elements, doc_meta):
         chunks.append({"chunk_id": f"{doc_meta['doc_id']}-{seq:04d}", "doc_id": doc_meta["doc_id"], "seq": seq,
                        "chunk_type": kind, "section_path": " > ".join(path), "text": text,
                        "context_header": header(), "page_start": min(pages) if pages else None,
-                       "page_end": max(pages) if pages else None, "n_tokens": est_tokens(text)})
+                       "page_end": max(pages) if pages else None, "n_tokens": est_tokens(text),
+                       "_path": list(path)})
 
     def flush(keep_overlap=False):
         nonlocal buf
@@ -147,6 +160,69 @@ def chunk_document(elements, doc_meta):
                 final.append(dict(ch, text=" ".join(part), n_tokens=est_tokens(" ".join(part))))
         else:
             final.append(ch)
+    final = merge_small(split_large_tables(final))
     for i, ch in enumerate(final):
         ch["seq"], ch["chunk_id"] = i, f"{doc_meta['doc_id']}-{i:04d}"
+        ch["text_hash"] = text_hash(ch["text"])
+        ch.setdefault("table_part", None)
+        ch.setdefault("merged_sections", 1)
+        ch.pop("_path", None)
     return final
+
+
+def split_large_tables(chunks):
+    """Split table chunks above TABLE_SPLIT_TOKENS into row groups of about TARGET_TOKENS, repeating the header row
+    (the first line) at the top of every part. Parts are labelled 'k/n' in table_part."""
+    out = []
+    for ch in chunks:
+        if ch["chunk_type"] != "table" or ch["n_tokens"] <= TABLE_SPLIT_TOKENS:
+            out.append(ch)
+            continue
+        lines = ch["text"].split("\n")
+        header, rows = lines[0], lines[1:]
+        groups, cur = [], []
+        for r in rows:
+            if cur and est_tokens("\n".join([header] + cur + [r])) > TARGET_TOKENS:
+                groups.append(cur)
+                cur = []
+            cur.append(r)
+        if cur:
+            groups.append(cur)
+        for k, g in enumerate(groups, 1):
+            text = "\n".join([header] + g)
+            out.append(dict(ch, text=text, n_tokens=est_tokens(text), table_part=f"{k}/{len(groups)}"))
+    return out
+
+
+def _mergeable(a, b):
+    """Two neighbouring chunks may merge if neither is a split-table part, the result stays within TARGET_TOKENS, and
+    they share a section, or are sibling sections under the same parent heading (never across top-level sections)."""
+    if a.get("table_part") or b.get("table_part"):
+        return False
+    if a["n_tokens"] + b["n_tokens"] > TARGET_TOKENS:
+        return False
+    pa, pb = a.get("_path") or [], b.get("_path") or []
+    if pa == pb:
+        return True
+    return len(pa) >= 2 and len(pb) >= 2 and pa[:-1] == pb[:-1] or (len(pa) >= 1 and pb[:len(pa)] == pa)
+
+
+def merge_small(chunks):
+    """Merge chunks below MIN_TOKENS into their following neighbour when _mergeable. The merged chunk keeps the first
+    piece's section path and context header; every heading inside it is written into the text, so nothing is lost for
+    citation. chunk_type becomes 'mixed' when text and table pieces are combined."""
+    out = []
+    for ch in chunks:
+        prev = out[-1] if out else None
+        if prev and (prev["n_tokens"] < MIN_TOKENS or ch["n_tokens"] < MIN_TOKENS) and _mergeable(prev, ch):
+            heading = ch.get("_path") or []
+            label = heading[-1] if heading and heading != (prev.get("_path") or []) else None
+            joined = prev["text"] + "\n\n" + (f"[{label}]\n" if label else "") + ch["text"]
+            pages = [p for p in (prev["page_start"], prev["page_end"], ch["page_start"], ch["page_end"]) if p is not None]
+            out[-1] = dict(prev, text=joined, n_tokens=est_tokens(joined),
+                           chunk_type=prev["chunk_type"] if prev["chunk_type"] == ch["chunk_type"] else "mixed",
+                           page_start=min(pages) if pages else None, page_end=max(pages) if pages else None,
+                           merged_sections=prev.get("merged_sections", 1) + (1 if label else 0))
+        else:
+            out.append(dict(ch))
+    return out
