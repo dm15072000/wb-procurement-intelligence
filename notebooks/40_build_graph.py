@@ -200,7 +200,8 @@ for ch in all_chunks:
     chunks_of[ch["project_id"]].append(ch)
 dfs = {pid: links.document_frequencies(chs) for pid, chs in chunks_of.items()}
 print("rare-word limit per slice project (chunks):",
-      {pid: max(1, int(links.RARE_DF_SHARE * dfs[pid][1])) for pid in sorted(dfs) if pid in slice_ids})
+      {pid: max(1, int(links.RARE_DF_SHARE * dfs[pid][1])) for pid in sorted(p for p in dfs if p in slice_ids)})
+# (chunks without a project_id, e.g. country-level CPFs, form their own group and are never linked)
 
 describes, compared = [], 0
 doc_types = set(links.LINK_DOC_TYPES)
