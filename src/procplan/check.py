@@ -103,13 +103,14 @@ def check_row(cells):
     """
     cells = [re.sub(r"\s+", " ", c or "").strip() for c in cells]
     ref = cells[0].split(" / ")[0].strip() if cells else ""
+    description = cells[0].split(" / ", 1)[1].strip() if cells and " / " in cells[0] else ""
     dates, bad = [], []
     for i, c in enumerate(cells[1:], start=1):
         ds, is_bad = cell_dates(c)
         dates += ds
         if is_bad:
             bad.append((i, c))
-    rec = {"ref": ref, "review": find_review(cells), "method": find_method(cells), "status": find_status(cells),
+    rec = {"ref": ref, "description": description, "review": find_review(cells), "method": find_method(cells), "status": find_status(cells),
            "n_dates": len(dates), "bad_dates": bad}
     rec["reason"] = reason(rec)
     return rec

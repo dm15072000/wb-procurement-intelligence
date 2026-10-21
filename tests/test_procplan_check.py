@@ -25,7 +25,7 @@ def test_check_row_clean_with_misordered_columns():
     row = ["IN-UPPWD-14106-CW-RFB / Construction of SH-51", "IBRD / 8940", "Network Improvement",
            "Request for Bids", "Prior", "Open - International", "54,431,569.00", "Signed", "2017-05-01", "13-Jun-2018"]
     rec = check_row(row)
-    assert rec["ref"] == "IN-UPPWD-14106-CW-RFB"
+    assert rec["ref"] == "IN-UPPWD-14106-CW-RFB" and rec["description"] == "Construction of SH-51"
     assert (rec["review"], rec["method"], rec["status"]) == ("Prior", "Request for Bids", "Signed")
     assert rec["n_dates"] == 2 and rec["reason"] == "clean"
 
