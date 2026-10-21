@@ -33,7 +33,7 @@ S, G, D = (f"{CATALOG}.{x}" for x in ("silver", "gold", "docs"))
 
 # MAGIC %md
 # MAGIC ## 1. Nodes
-# MAGIC Universe projects and their contracts, suppliers, notices and tenders; all countries and sectors they touch; the
+# MAGIC Universe projects and their contracts, suppliers, notices and tenders; all countries, regions and sectors they touch; the
 # MAGIC slice documents, sections and chunks. `props` holds type-specific attributes as JSON.
 
 # COMMAND ----------
@@ -53,9 +53,15 @@ FROM {S}.countries
 UNION ALL
 SELECT concat('project:', project_id), 'Project', project_name,
        to_json(named_struct('approval_fy', approval_fy, 'status', status, 'roads_pct', roads_pct,
-                            'closing_date', closing_date, 'in_slice', in_slice, 'total_commitment_usd', total_commitment_usd)),
+                            'closing_date', closing_date, 'in_slice', in_slice, 'total_commitment_usd', total_commitment_usd,
+                            'is_regional', is_regional, 'country_mapping_status', country_mapping_status)),
        board_approval_date, 'silver.projects'
 FROM u_projects
+UNION ALL
+-- Regions: multi-country / regional operations (source code such as 3W) have no single country, so they link to a
+-- Region node instead (or as well, when a project lists both a region code and countries).
+SELECT DISTINCT concat('region:', r), 'Region', r, CAST(NULL AS STRING), CAST(NULL AS DATE), 'silver.projects'
+FROM u_projects LATERAL VIEW explode(region_names) t AS r
 UNION ALL
 SELECT DISTINCT concat('sector:', s.name), 'Sector', s.name, CAST(NULL AS STRING), CAST(NULL AS DATE), 'silver.projects'
 FROM u_projects LATERAL VIEW explode(from_json(sectors_json, 'array<struct<name:string,pct:int>>')) t AS s
@@ -114,6 +120,10 @@ SELECT concat('project:', project_id) AS src_id, concat('country:', iso3) AS dst
        board_approval_date AS available_from
 FROM u_projects LATERAL VIEW explode(country_iso3_list) t AS iso3
 UNION ALL
+SELECT concat('project:', project_id), concat('region:', r), 'IN_REGION', CAST(NULL AS DOUBLE), 'project_region_code',
+       project_id, board_approval_date
+FROM u_projects LATERAL VIEW explode(region_names) t AS r
+UNION ALL
 SELECT concat('project:', project_id), concat('sector:', s.name), 'HAS_SECTOR', CAST(s.pct AS DOUBLE), 'sector_share',
        project_id, board_approval_date
 FROM u_projects LATERAL VIEW explode(from_json(sectors_json, 'array<struct<name:string,pct:int>>')) t AS s
@@ -152,10 +162,15 @@ FROM {D}.chunks
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. `DESCRIBES` edges: contract ↔ document chunk, scored (slice projects only)
+# MAGIC ## 3. Contract ↔ document chunk links, scored (slice projects only)
 # MAGIC For each slice project: every contract × every chunk of its ISRs / ICR / ICR Review / PPAR / Project Papers.
-# MAGIC Chunk text features are computed once per chunk. Supplier names used for evidence are **firm** canonical names
-# MAGIC (no placeholders, no individuals).
+# MAGIC Supplier names used for evidence are **firm** canonical names (no placeholders, no individuals).
+# MAGIC
+# MAGIC **Two edge types** (after the first run, where 99.9% of links rested on overlap of common words):
+# MAGIC - `DESCRIBES`: **strong**. The passage mentions the contract's reference number or its supplier.
+# MAGIC - `MAY_DESCRIBE`: **weak**, weight ≤ 0.45. The passage shares ≥ 3 **rare** words with the contract
+# MAGIC   description. "Rare" = appears in ≤ 1% of ALL chunks (document frequency measured here), so "rural", "road" and
+# MAGIC   district names carry no weight.
 
 # COMMAND ----------
 
@@ -169,29 +184,68 @@ for r in spark.sql(f"""SELECT a.contract_key, s.canonical_name FROM u_awards a J
                        WHERE s.kind = 'firm' AND NOT s.is_placeholder""").collect():
     names[r.contract_key].append(r.canonical_name)
 
+# Word document frequencies over ALL chunks (every doc type, every project): this is what defines "rare".
+all_chunks = [dict(r.asDict(), **links.chunk_features(r.asDict()))
+              for r in spark.table(f"{D}.chunks").select("chunk_id", "project_id", "doc_type", "doc_date",
+                                                          "section_path", "text").collect()]
+df, n_chunks = links.document_frequencies(all_chunks)
+print(f"document frequencies over {n_chunks:,} chunks; rare = in <= {max(1, int(links.RARE_DF_SHARE * n_chunks))} chunks")
+
 describes, compared = [], 0
-doc_types = tuple(links.LINK_DOC_TYPES)
+doc_types = set(links.LINK_DOC_TYPES)
+by_project = defaultdict(list)
+for ch in all_chunks:
+    if ch["doc_type"] in doc_types:
+        by_project[ch["project_id"]].append(ch)
 for pid in slice_ids:
-    chunks = [dict(r.asDict(), **links.chunk_features(r.asDict())) for r in spark.sql(
-        f"""SELECT chunk_id, project_id, doc_type, doc_date, section_path, text FROM {D}.chunks
-            WHERE project_id = '{pid}' AND doc_type IN ({','.join(repr(x) for x in doc_types)})""").collect()]
     for c in contracts.get(pid, []):
         sn = names.get(c["contract_key"], [])
-        for ch in chunks:
+        for ch in by_project.get(pid, []):
             compared += 1
-            score, rule = links.link_score(c, ch, sn)
+            score, rule, edge = links.link_score(c, ch, sn, df=df, n_chunks=n_chunks)
             if score:
                 describes.append({"src_id": f"chunk:{ch['chunk_id']}", "dst_id": f"contract:{c['contract_key']}",
-                                  "edge_type": "DESCRIBES", "weight": score, "rule": rule,
+                                  "edge_type": edge, "weight": score, "rule": rule,
                                   "evidence": ch["chunk_id"], "available_from": ch["doc_date"]})
 if describes:
     spark.createDataFrame(describes, "src_id string, dst_id string, edge_type string, weight double, rule string, "
                           "evidence string, available_from date").write.mode("append").saveAsTable(f"{G}.edges")
-desc_report = {"pairs_compared": compared, "describes_edges": len(describes),
-               "contracts_linked": len({d["dst_id"] for d in describes}),
-               "slice_contracts": sum(len(v) for v in contracts.values()),
-               "by_rule": dict(Counter(d["rule"] for d in describes).most_common())}
+strong = [d for d in describes if d["edge_type"] == links.STRONG]
+weak = [d for d in describes if d["edge_type"] == links.WEAK]
+desc_report = {"pairs_compared": compared, "slice_contracts": sum(len(v) for v in contracts.values()),
+               "DESCRIBES_strong": len(strong), "MAY_DESCRIBE_weak": len(weak),
+               "contracts_with_strong_link": len({d["dst_id"] for d in strong}),
+               "contracts_with_any_link": len({d["dst_id"] for d in describes}),
+               "first_run_for_comparison": {"links": 11220, "contracts_linked": 1067, "overlap_only_share": 0.999},
+               "by_rule": dict(Counter(d["rule"].split("+rare_words")[0] + ("+rare_words" if "rare_words" in d["rule"] else "")
+                                       for d in describes).most_common())}
 print(json.dumps(desc_report, indent=2))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 3b. Review samples: every strong link, and 30 random weak links
+# MAGIC **Please mark each as relevant / not relevant**: that gives the measured precision of each edge type. For each
+# MAGIC link: contract description, the evidence, and the start of the passage.
+
+# COMMAND ----------
+
+import random
+text_of = {ch["chunk_id"]: ch for ch in all_chunks}
+desc_of = {c["contract_key"]: c["description"] for v in contracts.values() for c in v}
+def show(d, k):
+    ch = text_of[d["evidence"]]
+    ck = d["dst_id"].split(":", 1)[1]
+    print(f"{k:2d}. {d['edge_type']} {d['weight']} | {d['rule']}\n    CONTRACT: {(desc_of.get(ck) or '')[:110]}\n"
+          f"    PASSAGE ({ch['doc_type'][:40]}, {ch['doc_date']}, '{(ch['section_path'] or '')[:60]}'): "
+          f"{' '.join((ch['text'] or '').split())[:260]}")
+print(f"=== all {len(strong)} strong (DESCRIBES) links ===")
+for k, d in enumerate(strong[:40], 1):
+    show(d, k)
+random.seed(42)
+print(f"\n=== 30 random weak (MAY_DESCRIBE) links of {len(weak)} ===")
+for k, d in enumerate(random.sample(weak, min(30, len(weak))), 1):
+    show(d, k)
 
 # COMMAND ----------
 
@@ -215,6 +269,9 @@ graph_report = {
     "edges": {r.edge_type: r.n for r in spark.sql(f"SELECT edge_type, count(*) n FROM {G}.edges GROUP BY edge_type").collect()},
     "orphan_edge_endpoints": {r.edge_type: r.n for r in orphans}, "duplicate_node_ids": dupe_nodes,
     "describes": desc_report,
+    # every universe project should reach a Country or a Region (expected 0 after the country mapping fix)
+    "universe_projects_without_country_or_region": spark.sql(
+        "SELECT count(*) n FROM u_projects WHERE size(country_iso3_list) = 0 AND size(region_names) = 0").first().n,
 }
 print(json.dumps(graph_report, indent=2))
 

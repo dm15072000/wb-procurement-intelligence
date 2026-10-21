@@ -3,3 +3,4 @@ assessment.md
 docs/01_plan.md
 checkvector.py
 WALKTHROUGH.md
+__pycache__/

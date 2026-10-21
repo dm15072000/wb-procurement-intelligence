@@ -22,7 +22,7 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 
 | Entity | Canonical key | Built from | Key fields | Notes |
 |---|---|---|---|---|
-| **Country** | `iso3` (e.g. `IND`) | World Bank country API [V] | iso2, name, lending_type (IDA/IBRD/Blend), income_level, region | Crosswalk iso2 ↔ iso3 ↔ WB code. Contract `borrower_country_code` is a *WB code that can differ from ISO* [V: DS00005 metadata], so it is mapped through the crosswalk, not assumed. |
+| **Country** | `iso3` (e.g. `IND`) | World Bank country API [V] | iso2, name, lending_type (IDA/IBRD/Blend), income_level, region | Crosswalk iso2 ↔ iso3 ↔ WB code. Contract `borrower_country_code` is a *WB code that can differ from ISO* [V: DS00005 metadata], so it is mapped through the crosswalk, not assumed. Legacy WB codes (ZR, RY, GZ, TP, YF), region codes and DS01004 country *names* are mapped by `src/entity_resolution/countries.py`, which keeps the original code and records a mapping status; codes that cannot be mapped confidently (YU, AN, SU, XB, pre-2006 YF naming neither country) stay NULL and are reported (docs/04 §8). |
 | **Project** | `project_id` (`P` + 6 digits) [V] | Projects API [V] | name, country iso3, approval FY, board approval date, closing date, status, sectors + % shares, `roads_pct`, IDA/IBRD amounts, lending instrument, env. category, implementing agency | `roads_pct` = share for sector "Rural and Inter-Urban Roads" (slice rule: ≥ 25%). Multi-country projects keep a project→country edge per country. |
 | **Contract** | `contract_key` = `C:{contract number}`: the number alone, so a contract listed in several datasets is one contract | DS00005, DS04691, DS01004 (de-duplicated; precedence DS00005 > DS04691 > DS01004) | project_id, borrower reference no., description, signing date, fiscal year, `coverage_status`, category, method, review type (`"unknown"` when null or absent), **total amount** (sum over suppliers), n_suppliers, `source_dataset`, `also_in` | DS00005 lists a joint venture as **one row per member, with the value split equally** [V: metadata], so a contract is many rows, aggregated to one. |
 | **ContractAward** | (`contract_key`, `supplier_key`) | DS00005, DS01004 | supplier raw name, supplier_id (DS00005 only), supplier country, amount USD | The link between a contract and each supplier. |
@@ -48,7 +48,7 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 
 ```
 gold.nodes(node_id STRING,      -- "{type}:{key}", e.g. "project:P147864", "supplier:S1a2b3c4d"
-           node_type STRING,    -- Project | Country | Sector | Contract | Supplier | Tender | Notice | Document | Section | Chunk | Rating | Lesson
+           node_type STRING,    -- Project | Country | Region | Sector | Contract | Supplier | Tender | Notice | Document | Section | Chunk | Rating | Lesson
            label STRING,        -- human-readable name
            props STRING,        -- JSON of type-specific attributes
            available_from DATE, -- when this fact became public (leakage control)
@@ -64,14 +64,16 @@ gold.edges(src_id STRING, dst_id STRING,
 
 | Edge type | From → To | Rule |
 |---|---|---|
-| `IN_COUNTRY` | Project → Country | project country code via crosswalk |
+| `IN_COUNTRY` | Project → Country | project country code mapped to ISO3 (`countries.py`, incl. legacy codes) |
 | `HAS_SECTOR` | Project → Sector | sector name; `weight` = % share |
 | `FOR_PROJECT` | Contract / Notice / Document → Project | `project_id` |
 | `AWARDED_TO` | Contract → Supplier | ContractAward; `weight` = amount |
 | `RESULTED_IN` | Tender → Contract | project ID + normalized reference (H1 join) |
 | `ANNOUNCED` | Notice → Tender | same |
 | `HAS_SECTION` / `HAS_CHUNK` | Document → Section → Chunk | parse structure |
-| `DESCRIBES` | Chunk → Contract | **contract-to-lesson link** (below). Attached to the *chunk* because that is where the evidence (and the citation) sits; its section is one `HAS_CHUNK` hop up. |
+| `DESCRIBES` | Chunk → Contract | **strong** contract-to-lesson link (below): reference-number or supplier mention. Attached to the *chunk* because that is where the evidence (and the citation) sits; its section is one `HAS_CHUNK` hop up. |
+| `MAY_DESCRIBE` | Chunk → Contract | **weak** link, weight ≤ 0.45: ≥ 3 shared *rare* words (in ≤ 1% of all chunks) with the contract description |
+| `IN_REGION` | Project → Region | regional projects whose World Bank code is a region (`3W`, `7C`, …), not a country |
 | `RATES` / `TEACHES` | Rating / Lesson → Project, Section | extraction (Stage 5) |
 
 ### The contract-to-ICR-lesson link (assessment M1, worked example) [P]
@@ -82,12 +84,14 @@ A contract row and an ICR section have no shared key apart from the project. The
 1. **Same project** (`project_id`): required.
 2. **Temporal proximity:** the section's document is dated *after* the contract signing (it can describe it), and for
    ISRs, the first ISR dated after signing scores highest.
-3. **Text evidence** (boosts the score): the section mentions the contract's reference number, its supplier's canonical
-   name, or ≥ 2 distinctive words of the contract description. Section type matters too (Lessons / Key factors /
-   Procurement sections weigh more).
+3. **Text evidence:** the passage mentions the contract's reference number or its supplier's canonical name (**strong**
+   → `DESCRIBES`), or shares ≥ 3 **rare** words with the contract description (**weak** → `MAY_DESCRIBE`, weight
+   capped at 0.45). "Rare" is measured: a word appears in ≤ 1% of all chunks, weighted by IDF, so common words such as
+   "rural", "road" and district names carry no weight. Lessons / key-factor / procurement sections add a small bonus.
+   *Why the split:* the first full run made 11,220 links, 99.9% of them on overlap of common words [M].
 
-Each `DESCRIBES` edge stores its `weight`, its `rule` (e.g. `project+temporal+ref_mention`) and its evidence. This lets
-the app show *why* a lesson is linked to a contract, and lets us measure link precision on a sample.
+Each link edge stores its `weight`, its `rule` (e.g. `project+temporal+ref_mention`) and its evidence. This lets the
+app show *why* a lesson is linked to a contract, and lets us measure precision per edge type on a reviewed sample.
 
 ### Temporal rule (leakage) [P]
 
@@ -121,6 +125,20 @@ with `available_from ≤ T`. For predicting a tender's duration, T = the tender'
    labelled short French firm names ("ACE INGENIEURS CONSEILS", "AGECET BTP") as people.
 5. **Joint ventures:** DS00005 already lists each member as its own row [V], so each member resolves on its own. A name
    that still contains `JV` / `JOINT VENTURE` / `CONSORTIUM` is kept as its own supplier, flagged `is_jv_name`.
+6. **Guards added after the first full-data run (checkpoint c)** [M: that run gave 270,474 suppliers; on the user's
+   50-pair sample of 4,019 R3 merges, ~4 were clearly wrong (numbered siblings: "Co. #24"/"#25", "Sinohydro Bureau
+   1"/"16", "China Railway No.10"/"No.13", "Modulo #2"/"#7"); the largest cluster (119 records) mixed different people
+   named "… KUMAR"]:
+   - **Shared-ID:** under one supplier_id, a name with similarity < 0.6 to the ID's most common name is not merged.
+   - **Common-name:** a *person-like* name (2–3 tokens of 3+ letters, no business word) used by ≥ 5 supplier_ids in
+     one country is not merged across IDs. The person-like test gates only this guard: firms registered under several
+     IDs ("FRED ENGINEERING", 6 IDs) still merge.
+   - **Number:** no R3 merge when the names contain different numbers. Trade-off: it also blocks correct merges like
+     "(LOT-1)/(LOT-2) <same firm>", accepted for precision.
+   - **JV:** no R3 merge between a JV-named and a non-JV record.
+   - **Chain:** an R3 merge must also pass the threshold between the two clusters' canonical (shortest) names, so
+     A≈B≈C chains can't drag in a C unlike A.
+   - R3 is never applied to individuals, with or without an ID.
 
 ### Measured on real data (Stage 2 download: 140 road projects, DS00005) [M]
 
@@ -141,7 +159,7 @@ tests had missed, now covered by regression tests: the placeholder mega-cluster 
 name-shape individual heuristic, and the dead R3 rule (0 merges under the original ID-blocking design).
 
 Code: `src/entity_resolution/suppliers.py`, `src/entity_resolution/keys.py`; tests: `tests/test_entity_resolution.py`
-(21 tests; 56 across the repo, all passing on 2026-10-21).
+(28 tests; 77 across the repo, all passing on 2026-10-21).
 
 ## 5. Missing-data handling [P]
 

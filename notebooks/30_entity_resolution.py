@@ -11,6 +11,15 @@
 # MAGIC R1 same DS00005 supplier_id → R2 same cleaned name + country → R3 near-identical name + country (firms only,
 # MAGIC stricter when supplier_ids differ). Placeholder names ("INDIVIDUAL CONSULTANT") resolve by supplier_id only.
 # MAGIC
+# MAGIC **Guards added after the first full-data run** (which merged numbered siblings like "Co. #24"/"#25" and built a
+# MAGIC 119-record "KUMAR" cluster of different people):
+# MAGIC - **shared-ID:** under one supplier_id, names unlike the ID's most common name are not merged;
+# MAGIC - **common-name:** a person-like name used by 5+ supplier_ids in one country is not merged across IDs;
+# MAGIC - **number:** no R3 merge when the names contain different numbers;
+# MAGIC - **JV:** no R3 merge between a JV-named and a non-JV record;
+# MAGIC - **chain:** an R3 merge must also pass between the two clusters' canonical names;
+# MAGIC - R3 is never applied to individuals, with or without an ID.
+# MAGIC
 # MAGIC **Why it matters:** supplier history ("has this firm been late before?") is only as good as this grouping. A wrong
 # MAGIC merge puts someone else's record in front of a user, so the rules favour precision.
 # MAGIC
@@ -39,27 +48,24 @@ S = f"{CATALOG}.silver"
 # COMMAND ----------
 
 rows = (spark.table(f"{S}.contract_awards")
-        .select("raw_supplier_name", "supplier_country_code", "supplier_country", "source_supplier_id", "procurement_method")
+        .select("raw_supplier_name", "supplier_country_code", "supplier_country", "source_supplier_id", "procurement_method",
+                "supplier_country_iso3")
         .distinct().collect())
-# DS01004 has supplier country NAMES but no codes; DS00005 has both. Without a crosswalk, the same firm in the two
-# datasets would never match (R2/R3 require the same country). Build name -> code from DS00005's own pairs.
-pairs = Counter((r.supplier_country.strip().upper(), r.supplier_country_code) for r in rows
-                if r.supplier_country and r.supplier_country_code)
-name_to_code = {}
-for (name, code), n in pairs.most_common():
-    name_to_code.setdefault(name, code)          # most frequent code per country name
+# Country used by R2/R3: the ISO3 mapped in notebook 11 (src/entity_resolution/countries.py). DS01004 has country
+# NAMES only and the STEP datasets have codes, so the ISO3 is what lets the same firm match across datasets (it also
+# folds legacy codes such as ZR into COD). Rows with no ISO3 (regional/"World", Stateless, missing) fall back to the
+# original code or name, so they are never merged with a real country.
 def country_of(r):
-    if r.supplier_country_code:
-        return r.supplier_country_code
-    return name_to_code.get((r.supplier_country or "").strip().upper(), (r.supplier_country or "").strip().upper())
-unmapped = sorted({(r.supplier_country or "") for r in rows if not r.supplier_country_code
-                   and (r.supplier_country or "").strip().upper() not in name_to_code})
-print("country names without a code (kept as uppercase names):", unmapped[:30], "...total", len(unmapped))
+    return r.supplier_country_iso3 or r.supplier_country_code or (r.supplier_country or "").strip().upper()
+no_iso3 = Counter(r.supplier_country_code or r.supplier_country for r in rows if not r.supplier_country_iso3)
+print("distinct supplier records without an ISO3 country (kept under their original code/name):", no_iso3.most_common(10))
 
 records = [{"raw_name": r.raw_supplier_name, "country": country_of(r),
             "supplier_id": r.source_supplier_id, "method": r.procurement_method or "",
             "_country_code": r.supplier_country_code, "_country": r.supplier_country} for r in rows]
-mapping, merges = sup.resolve(records)
+guard_stats = {}   # how many merges each guard blocked (shared-ID, common-name, number, JV, chain)
+mapping, merges = sup.resolve(records, stats=guard_stats)
+print("guards blocked:", guard_stats)
 print(f"{len(records):,} distinct supplier records -> {len({m['supplier_key'] for m in mapping}):,} suppliers")
 
 # COMMAND ----------
@@ -128,6 +134,8 @@ er_report = {
     "kinds": dict(Counter(m["kind"] for m in mapping)), "placeholders": sum(m["is_placeholder"] for m in mapping),
     "jv_named": sum(m["is_jv_name"] for m in mapping),
     "cluster_size_counts": dict(sorted(Counter(keys_.values()).items())[:12]), "largest_cluster": max(keys_.values()),
+    "guards_blocked": guard_stats,
+    "run_before_guards_for_comparison": {"suppliers": 270474, "R1": 14213, "R2": 33949, "R3": 4019, "largest_cluster": 119},
 }
 print(json.dumps(er_report, indent=2))
 print(f"\nR3 review sample ({len(sample)} of {len(r3)}):")
@@ -163,6 +171,27 @@ generic = spark.sql(f"""SELECT norm_name, count(*) AS n FROM {S}.entity_map
 placeholder_report["possible_missed_placeholders_top20"] = [(r.norm_name, r.n) for r in generic]
 print(json.dumps(placeholder_report, indent=2, default=str))
 
-print("\nLargest clusters:")
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 3b. Rule chains of the 5 largest clusters
+# MAGIC For each large cluster: how it was built, merge by merge (rule, score, the two names, their supplier IDs), in the
+# MAGIC order the resolver made them. A cluster built only from R1/R2 on consistent names is fine; one that grows through a
+# MAGIC chain of R3 steps, or through one supplier ID shared by different names, is the pattern the guards target.
+
+# COMMAND ----------
+
+idx_by_key = {}
+for i, m in enumerate(mapping):
+    idx_by_key.setdefault(m["supplier_key"], set()).add(i)
 for k, n in keys_.most_common(5):
-    print(n, sorted({records[i]['raw_name'] for i, m in enumerate(mapping) if m['supplier_key'] == k})[:6])
+    members = idx_by_key[k]
+    chain = [(rule, s, i, j) for i, j, rule, s in merges if i in members and j in members]
+    print(f"\n=== cluster of {n} records | rules: {dict(Counter(r for r, _, _, _ in chain))} | "
+          f"distinct names: {len({records[i]['raw_name'] for i in members})} | "
+          f"distinct supplier_ids: {len({records[i]['supplier_id'] for i in members if records[i]['supplier_id']})}")
+    for step, (rule, s, i, j) in enumerate(chain[:25], 1):
+        print(f"  {step:2d}. {rule:15s} {s:.3f} | {records[i]['raw_name'][:38]:38s} [{records[i]['supplier_id']}] "
+              f"+ {records[j]['raw_name'][:38]:38s} [{records[j]['supplier_id']}]")
+    if len(chain) > 25:
+        print(f"  ... {len(chain) - 25} more steps")

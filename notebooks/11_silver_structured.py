@@ -31,7 +31,8 @@ sys.path.append(os.path.abspath(".."))
 import importlib
 import src.ingest.transform as tf
 import src.entity_resolution.keys as keys
-importlib.reload(tf); importlib.reload(keys)
+import src.entity_resolution.countries as co
+importlib.reload(tf); importlib.reload(keys); importlib.reload(co)
 
 CATALOG = "procurement"
 B, S, G, O = (f"{CATALOG}.{x}" for x in ("bronze", "silver", "gold", "ops"))
@@ -63,27 +64,35 @@ report = {}
 
 # MAGIC %md
 # MAGIC ## 1. Countries and projects
-# MAGIC Projects get their iso3 country through the crosswalk (contract and project country codes are World Bank codes,
-# MAGIC which can differ from ISO). Flags: `in_universe` (training) and `in_slice` (demo, documents).
+# MAGIC Projects get their iso3 country through `src/entity_resolution/countries.py` (unit-tested). Source codes are
+# MAGIC World Bank codes, which can differ from ISO: legacy codes (ZR → COD, RY → YEM, GZ → PSE, TP → TLS, YF → SRB/MNE by
+# MAGIC project name and date), region codes (3W = Western and Central Africa → `is_regional`), and codes we refuse to
+# MAGIC guess (YU = former Yugoslavia, reported). The original codes stay in `country_iso2_list`.
+# MAGIC Flags: `in_universe` (training) and `in_slice` (demo, documents).
 
 # COMMAND ----------
 
 countries = tf.country_rows([{}, records("countries")])
 save(countries, f"{S}.countries", "iso3 string, iso2 string, name string, region string, income_level string, lending_type string")
 iso2_to_iso3 = {c["iso2"]: c["iso3"] for c in countries if c["iso2"]}
+name_to_iso3 = {c["name"].lower(): c["iso3"] for c in countries if c["name"]}
 
 # One row per project_id: a project seen on two pages may differ slightly (updated between pages); keep the last copy.
 projects = list({p["project_id"]: p for p in (tf.project_row(r) for r in records("projects")) if p}.values())
 dup_report["projects"]["distinct_project_ids"] = len(projects)
 for p in projects:
-    p["country_iso3_list"] = [iso2_to_iso3.get(c) for c in p["country_iso2_list"] if iso2_to_iso3.get(c)]
+    # original codes stay in country_iso2_list; the mapped ISO3, regional flag and mapping status are added
+    p.update(co.resolve_project(p["country_iso2_list"], iso2_to_iso3, p["project_id"], p["project_name"],
+                                p["board_approval_date"]))
     p["in_universe"] = tf.in_universe(p)
     p["in_slice"] = p["project_id"] in SLICE
 save(projects, f"{S}.projects",
      "project_id string, project_name string, country_iso2_list array<string>, is_multi_country boolean, region string, "
      "approval_fy int, board_approval_date date, closing_date date, status string, sectors_json string, roads_pct int, "
      "ida_commitment_usd double, ibrd_commitment_usd double, total_commitment_usd double, lending_instrument string, "
-     "env_category string, implementing_agency string, country_iso3_list array<string>, in_universe boolean, in_slice boolean")
+     "env_category string, implementing_agency string, country_iso3_list array<string>, region_names array<string>, "
+     "is_regional boolean, country_mapping_status string, country_mapping_notes array<string>, in_universe boolean, "
+     "in_slice boolean")
 UNIVERSE = {p["project_id"] for p in projects if p["in_universe"]}
 missing_slice = sorted(set(SLICE) - UNIVERSE)
 report["projects"] = {"all": len(projects), "universe": len(UNIVERSE), "slice": len(SLICE),
@@ -107,14 +116,22 @@ per_source = {ds: tf.contracts_from_awards(records(table), ds) for ds, table in 
 contracts, awards, merge_report = tf.merge_datasets(per_source)
 for c in contracts:
     c["in_universe"] = c["project_id"] in UNIVERSE
+    # Country: code first (STEP datasets), name when there is no code (DS01004 has names only). Original kept.
+    r = co.resolve(c["borrower_country_code"], c["borrower_country"], iso2_to_iso3, name_to_iso3)
+    c["borrower_country_iso3"], c["borrower_is_regional"], c["borrower_country_mapping_status"] =         r["country_iso3"], r["is_regional"], r["mapping_status"]
+for a in awards:
+    r = co.resolve(a["supplier_country_code"], a["supplier_country"], iso2_to_iso3, name_to_iso3)
+    a["supplier_country_iso3"], a["supplier_country_mapping_status"] = r["country_iso3"], r["mapping_status"]
 save(contracts, f"{S}.contracts",
      "contract_key string, source_dataset string, project_id string, borrower_reference string, ref_key string, "
      "description string, signing_date date, fiscal_year int, procurement_category string, procurement_method string, "
      "review_type string, coverage_status string, borrower_country string, borrower_country_code string, "
-     "total_amount_usd double, n_suppliers int, also_in array<string>, in_universe boolean")
+     "total_amount_usd double, n_suppliers int, also_in array<string>, in_universe boolean, "
+     "borrower_country_iso3 string, borrower_is_regional boolean, borrower_country_mapping_status string")
 save(awards, f"{S}.contract_awards",
      "contract_key string, raw_supplier_name string, supplier_country string, supplier_country_code string, "
-     "source_supplier_id string, procurement_method string, amount_usd double")
+     "source_supplier_id string, procurement_method string, amount_usd double, supplier_country_iso3 string, "
+     "supplier_country_mapping_status string")
 
 # Sanity check (replaces the old "no contracts in FY2017-19" assertion): each dataset must stay inside the fiscal years
 # its own description documents. A violation means the coverage rules need revisiting, not silent acceptance.
@@ -132,6 +149,46 @@ report["contracts"] = {
     "universe_contracts_by_dataset": dict(Counter(c["source_dataset"] for c in contracts if c["in_universe"])),
 }
 assert not any(out_of_range.values()), f"dataset rows outside their documented fiscal years: {out_of_range}"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 2b. Country-code report: every code that is not a plain WB country code, with counts
+# MAGIC Expected from the local audit (2026-10-21): no unmapped borrower codes; ~19 supplier rows unmapped (Stateless,
+# MAGIC Netherlands Antilles, CIS); 90 projects coded YU (former Yugoslavia) and 17 YF projects from before June 2006
+# MAGIC whose names name neither Serbia nor Montenegro, all reported, never guessed. In the training universe: 5 legacy
+# MAGIC codes (TP, ZR, YF, RY) now mapped, 9 regional projects, 0 unmapped.
+
+# COMMAND ----------
+
+def code_report(items):
+    """items: (original code or name, status, reason) -> {status: {original: count}} excluding plain matches."""
+    out = {}
+    for orig, status, reason in items:
+        if status not in ("direct", "name"):
+            out.setdefault(status, Counter())[f"{orig} | {reason}"] += 1
+    return {k: dict(v.most_common()) for k, v in out.items()}
+
+report["country_mapping"] = {
+    "projects_by_status": dict(Counter(p["country_mapping_status"] for p in projects)),
+    "universe_projects_by_status": dict(Counter(p["country_mapping_status"] for p in projects if p["in_universe"])),
+    "universe_regional_projects": sorted(p["project_id"] for p in projects if p["in_universe"] and p["is_regional"]),
+    "project_codes": code_report((n.split(": ", 1)[0], p["country_mapping_status"], n.split(": ", 1)[1])
+                                 for p in projects for n in p["country_mapping_notes"]),
+    "borrower_by_status": dict(Counter(c["borrower_country_mapping_status"] for c in contracts)),
+    "borrower_codes": code_report((c["borrower_country_code"] or c["borrower_country"],
+                                   c["borrower_country_mapping_status"],
+                                   co.resolve(c["borrower_country_code"], c["borrower_country"], iso2_to_iso3,
+                                              name_to_iso3)["mapping_reason"]) for c in contracts
+                                  if c["borrower_country_mapping_status"] in ("unmapped", "ambiguous", "legacy_code")),
+    "supplier_by_status": dict(Counter(a["supplier_country_mapping_status"] for a in awards)),
+    "supplier_codes": code_report((a["supplier_country_code"] or a["supplier_country"],
+                                   a["supplier_country_mapping_status"],
+                                   co.resolve(a["supplier_country_code"], a["supplier_country"], iso2_to_iso3,
+                                              name_to_iso3)["mapping_reason"]) for a in awards
+                                  if a["supplier_country_mapping_status"] in ("unmapped", "ambiguous", "legacy_code")),
+}
+print(json.dumps(report["country_mapping"], indent=2))
 
 # COMMAND ----------
 

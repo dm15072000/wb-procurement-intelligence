@@ -11,7 +11,7 @@ Every grouping decision is recorded with its rule and score so it can be audited
 import hashlib
 import re
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 
 PREFIXES = {"M/S", "MS", "MESSRS", "THE"}
@@ -65,6 +65,8 @@ def is_individual(raw, method=""):
 
 FUZZY_THRESHOLD_ID_CONFLICT = 0.95  # stricter when the two records carry different DS00005 supplier_ids
 MAX_BLOCK = 1500                    # blocks bigger than this are split by the second token
+SHARED_ID_MIN_SIMILARITY = 0.6      # under one supplier_id, names less similar than this to the modal name don't merge
+COMMON_NAME_MIN_IDS = 5             # a (name, country) used by this many different supplier_ids is a common name
 
 
 def similarity(a, b):
@@ -105,50 +107,106 @@ class _UnionFind:
         return False
 
 
-def resolve(records):
+# Business words (several languages). Used ONLY to decide whether a name is person-like for the common-name guard.
+BUSINESS_WORDS = {
+    "AND", "CONSTRUCTION", "CONSTRUCTIONS", "ENGINEERING", "ENGINEERS", "CONSULTING", "CONSULTANTS", "CONSULTANT",
+    "CONSULTANCY", "CONSULT", "SERVICES", "SERVICE", "INFRASTRUCTURE", "INDUSTRIES", "ENTERPRISES", "ENTERPRISE",
+    "GROUP", "HOLDING", "HOLDINGS", "TECHNOLOGIES", "TECHNOLOGY", "SYSTEMS", "SOLUTIONS", "INTERNATIONAL", "ASSOCIATES",
+    "PROJECTS", "BUILDERS", "CONTRACTORS", "CONTRACTOR", "TRADING", "TRADERS", "SUPPLIERS", "BUREAU", "INSTITUTE",
+    "UNIVERSITY", "FOUNDATION", "AGENCY", "MEDIA", "ROADS", "HIGHWAYS", "BRIDGE", "INFRA", "MOTORS", "WORKS", "CENTRE",
+    "CENTER", "CONSTRUCTORA", "INGENIERIA", "INGEGNERIA", "INGENIERIE", "INGENIEURS", "INGENIEUR", "CONSEIL", "CONSEILS",
+    "ENTREPRISE", "ETS", "SOCIETE", "ETUDES", "CABINET", "BTP", "GROUPE", "GROUPEMENT", "COMPANY", "CORPORATION",
+    "ORGANIZATION", "ORGANISATION", "NETWORK", "LOGISTICS", "PRINT", "PRINTERS", "ELECTRIC", "ELECTRICALS", "TRAVELS",
+}
+
+
+def is_person_like(norm_name):
+    """2-3 tokens of 3+ letters each and no business word: 'RAJ KUMAR' yes; 'FRED ENGINEERING', 'CAFI B' no."""
+    toks = norm_name.split()
+    return 2 <= len(toks) <= 3 and all(t.isalpha() and len(t) >= 3 for t in toks) and not set(toks) & BUSINESS_WORDS
+
+
+def _numbers(name):
+    """Numbers in a name: 'CHINA RAILWAY NO 13TH GROUP' -> {'13'}; 'HYDRAULIC CONSTR CO 24' -> {'24'}."""
+    return set(re.findall(r"\d+", name or ""))
+
+
+def resolve(records, stats=None):
     """Resolve supplier records into canonical suppliers.
 
     records: list of dicts with keys raw_name, country, supplier_id (str or None), method (optional).
+    stats:   optional dict; filled with counts of merges each guard blocked (for the notebook report).
     Returns (mapping, merges):
       mapping: one dict per input record: supplier_key, norm_name, kind, is_jv_name, rule, score
-      merges:  list of (i, j, rule, score) union decisions, for auditing / sampling
+      merges:  list of (i, j, rule, score) union decisions, for auditing / sampling / rule chains
+    Guards added after the full-data run (checkpoint c): shared-ID, common-name, number, JV and chain guards.
     """
+    stats = stats if stats is not None else {}
+    for k in ("R1_blocked_dissimilar_name_under_one_id", "R2_blocked_common_name", "R3_blocked_numbers_differ",
+              "R3_blocked_jv_vs_non_jv", "R3_blocked_chain_canonical"):
+        stats.setdefault(k, 0)
     n = len(records)
     norm = [normalize_name(r.get("raw_name")) for r in records]
     country = [(r.get("country") or "").strip().upper() for r in records]
     sid = [str(r["supplier_id"]).strip() if r.get("supplier_id") not in (None, "") else None for r in records]
     indiv = [is_individual(r.get("raw_name"), r.get("method", "")) for r in records]
     placeholder = [nm in PLACEHOLDERS for nm in norm]
+    jv = [bool(JV_PATTERN.search(_ascii(r.get("raw_name")).upper())) for r in records]
     uf, merges = _UnionFind(n), []
 
+    # R1: same supplier_id. Shared-ID guard: under one ID, a record whose name is not similar to the ID's most common
+    # name is NOT merged (full-data run: one cluster mixed "AJAY KUMAR", "RAJ KUMAR", "NEERAJ KUMAR", ...).
+    # Placeholder names carry no name evidence, so they always merge by ID.
     by_sid = defaultdict(list)
     for i in range(n):
         if sid[i]:
             by_sid[sid[i]].append(i)
     for idx in by_sid.values():
-        for j in idx[1:]:
-            if uf.union(idx[0], j):
-                merges.append((idx[0], j, "R1_supplier_id", 1.0))
+        named = [i for i in idx if not placeholder[i]]
+        modal = Counter(norm[i] for i in named).most_common(1)[0][0] if named else None
+        anchor = next((i for i in idx if norm[i] == modal), idx[0])
+        for j in idx:
+            if j == anchor:
+                continue
+            if not placeholder[j] and modal is not None and similarity(norm[j], modal) < SHARED_ID_MIN_SIMILARITY:
+                stats["R1_blocked_dissimilar_name_under_one_id"] += 1
+                continue
+            if uf.union(anchor, j):
+                merges.append((anchor, j, "R1_supplier_id", 1.0))
 
     # R2: same cleaned name + same country. Never for placeholders. For individuals, only when the supplier_ids don't
-    # contradict it (two different people can share a common name).
+    # contradict it. Common-name guard: a PERSON-LIKE (name, country) used by >= COMMON_NAME_MIN_IDS different
+    # supplier_ids is a common name, not one firm ("RAJ KUMAR" in India), so different-ID and no-ID records with it are
+    # not merged. Firms registered under several IDs ("FRED ENGINEERING", 6 IDs) still merge: the guard needs both.
     by_exact = defaultdict(list)
     for i in range(n):
         if not placeholder[i]:
             by_exact[(norm[i], country[i], indiv[i])].append(i)
-    for idx in by_exact.values():
+    common = {k for k, idx in by_exact.items()
+              if is_person_like(k[0]) and len({sid[i] for i in idx if sid[i]}) >= COMMON_NAME_MIN_IDS}
+    for key, idx in by_exact.items():
         for j in idx[1:]:
             a = idx[0]
             if indiv[a] and sid[a] and sid[j] and sid[a] != sid[j]:
                 continue
+            if key in common and not (sid[a] and sid[a] == sid[j]):
+                stats["R2_blocked_common_name"] += 1
+                continue
             if uf.union(a, j):
                 merges.append((a, j, "R2_exact_norm", 1.0))
 
-    # R3: compare one representative per (normalized name, country) within a block. Firms only, no placeholders.
+    # R3: compare one representative per (normalized name, country) within a block. Firms only (never individuals,
+    # with or without an ID), no placeholders, no common names.
     reps = {}
     for (nm, c, ind), idx in by_exact.items():
-        if not ind:
+        if not ind and (nm, c, ind) not in common:
             reps[(nm, c)] = idx[0]
+    # Chain guard: each cluster keeps a canonical name (its shortest member name). An R3 merge must pass the threshold
+    # between the two clusters' canonical names too, so A~B, B~C can't drag in a C that is unlike A.
+    canon = {}
+    def canon_of(i):
+        r = uf.find(i)
+        return canon.setdefault(r, norm[r])
     blocks = defaultdict(list)
     for (nm, c), i in reps.items():
         blocks[(c, _block(nm))].append((nm, i))
@@ -176,8 +234,21 @@ def resolve(records):
                 if sm.real_quick_ratio() < thr or sm.quick_ratio() < thr:  # cheap exact upper bounds first
                     continue
                 s = min(sm.ratio(), similarity(na, nb))  # == fuzzy_score(na, nb)
-                if s >= thr and uf.union(ia, ib):
-                    merges.append((ia, ib, "R3_fuzzy", round(s, 3)))
+                if s < thr or uf.find(ia) == uf.find(ib):
+                    continue
+                if _numbers(na) != _numbers(nb):      # "CO #24" vs "CO #25", "BUREAU 1" vs "BUREAU 16"
+                    stats["R3_blocked_numbers_differ"] += 1
+                    continue
+                if jv[ia] != jv[ib]:                    # "JV PT SURYA ABADI" vs "PT SURYA ABADI"
+                    stats["R3_blocked_jv_vs_non_jv"] += 1
+                    continue
+                ca, cb = canon_of(ia), canon_of(ib)
+                if fuzzy_score(ca, cb) < thr or _numbers(ca) != _numbers(cb):
+                    stats["R3_blocked_chain_canonical"] += 1
+                    continue
+                uf.union(ia, ib)
+                canon[uf.find(ia)] = min((ca, cb), key=lambda x: (len(x), x))
+                merges.append((ia, ib, "R3_fuzzy", round(s, 3)))
 
     rule_of = {}
     for i, j, rule, score in merges:

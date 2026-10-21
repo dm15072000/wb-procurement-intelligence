@@ -195,6 +195,16 @@ Caveats [M] (the pass is real but the margin is thin):
 - One mapped "signing actual" is in the future (2027-12-14, P143751), so the signing column may sometimes be another
   step. Test (a) must check plausibility.
 
+**Stage 3 reconciliation (notebook 20 §5b, run by the user 2026-10-21) [M]:** the Stage 3 label pass reported 543
+clean activities, against the gate's 572. Row-by-row comparison with the gate's saved verdicts: **765 rows at the gate,
+765 now; 543 clean (excluding merged-header rows) at both; 0 verdicts changed.** So the parse and the checker are
+stable. The gap is in how the rows were counted, not in the data:
+- 553 = 543 + the 10 merged-header rows ("Activity Reference No."), which the gate counted as clean and Stage 3
+  excludes by design. On the same parse, the gate rate is 553 / 765 = **72.3%**, still above the 70% gate.
+- 572 came from an earlier parse; `ai_parse_document` output is not byte-identical between runs. A "~562" figure
+  quoted during Stage 3 was my arithmetic error, not a measurement.
+Plan dates are already out of the models (decision 2026-10-21), so this changes only the label counts, which stay at 543.
+
 **Test (a): is the plan duration cleaner than the notice→signing join? No [M].**
 
 | Same 16 projects | Plan dates (actual signing − actual notice) | Notice→signing join (H1 method) |
@@ -237,3 +247,49 @@ carry the re-tender/cancellation labels that structured data lacks (H2).
    and post-review results separately.
 3. **Procurement Plans:** add them as a source for planned-vs-actual schedule slippage (L1/L3)?
 4. ~~Run `notebooks/00_verify_workspace.py`~~: done (§4).
+
+## 8. Country codes: audit and mapping (Stage 3, 2026-10-21) [V/M]
+
+**Why:** the first notebook 40 run gave some universe projects no `IN_COUNTRY` edge. The cause was World Bank country
+codes that are not ISO codes. Rather than hard-coding a few, every code was audited: all 22,589 projects plus every
+borrower and supplier code or name in DS00005, DS04691 and DS01004 (read-only local script, full download). Mapping:
+`src/entity_resolution/countries.py` (unit-tested in `tests/test_countries.py`). The original code is always kept
+(`country_iso2_list` on projects; `*_country_code` / `*_country` on contracts and awards) next to the mapped
+`*_iso3` and a `*_mapping_status` (direct / legacy_code / name / regional / ambiguous / unmapped / missing).
+
+**Codes outside the WB country list [M] (rows; projects = project count):**
+
+| Code | Meaning | Mapped to | Reason | Projects | DS00005 borrower / supplier | DS04691 borrower / supplier |
+|---|---|---|---|---|---|---|
+| ZR | Zaire | COD | renamed DR Congo 1997; WB kept ZR | 181 | 5,673 / 5,419 | 1,010 / 835 |
+| RY | Republic of Yemen | YEM | WB code; ISO is YE | 217 | 143 / 89 | 0 / 1 |
+| GZ | West Bank and Gaza | PSE | WB code; ISO is PS | 140 | 2,175 / 1,999 | 158 / 142 |
+| TP | East Timor | TLS | old ISO code; Timor-Leste since 2002 | 49 | 242 / 224 | 55 / 40 |
+| TW | Taiwan, China | TWN | not in the WB country API (no lending type, no governance data) | 18 (FY1962–71) | 0 / 11 | 0 / 2 |
+| YF | FR Yugoslavia / Serbia and Montenegro, then Serbia | SRB or MNE, see below | Montenegro independent 2006-06-03 | 87 | 1,485 / 1,456 | 197 / 180 |
+| YU | Yugoslavia, former | **unmapped** | predecessor of 7 states (FY1950–91) | 90 | – | – |
+| AN, SU, XB | Netherlands Antilles; "CIS"; "Stateless" | **unmapped** | dissolved / not one country / no country | – | 0 / 16 | 0 / 3 |
+| 19 territories (RE, GP, CK, IO, …) | ISO territories not in the WB API | their ISO3 | standard ISO 3166 | – | 0 / 61 | 0 / 18 |
+| 3A, 3W, 3E, 3T, 3S, W1, W2, W4, 4E, 4P, 4S, 4A, 4M, 5M, 5R, 6R, CB, 6O, 6L, 6C, 6A, 6B, 7C, 7E, 7B, 7X, 7A, AC, 8S, 1M, 1W, 99 | regions, groupings, "World" | `is_regional`, `region_name` | not one country | 791 | 27,143 borrower; 1,276 supplier ("World") | 4,026 / 277 |
+| (none) | empty project stub (ID + URL only) | missing | nothing to map | 2,837 | 9,948 borrower rows with only a name | 1,108 |
+
+**YF rule [M]:** a hand-checked override (P076764 "SAC (Montenegro)" → MNE; P088867 "…Serbia and Montenegro
+Component – Serbia Project" → SRB); otherwise a project name naming only one country decides; otherwise approval after
+2006-06-03 → SRB; YF on a STEP contract row (all FY2017+) → SRB. **17 projects stay ambiguous** (approved before the split
+or undated, names naming neither country); none is in the training universe. Only P158413 (FY2017, Serbia) is.
+
+**Names [M]:** DS01004 has **no country codes at all** (only `borrower_country` / `supplier_country` names), and STEP
+rows without a borrower code carry a name. Names map by exact WB country name, then an alias table for spellings the
+WB API shortens ("Egypt, Arab Republic of" → EGY, "Vietnam" → VNM, "Turkey"/"Turkiye" → TUR, …), then region names
+("Western Africa", "Horn of Africa", "DRC - Angola", …) → regional. After the aliases: **0 unmapped borrower rows in any
+dataset; 19 unmapped supplier rows** (Stateless 10, Netherlands Antilles 8, CIS 1). DS01004 has 26,024 supplier rows
+labelled "World" (regional, no ISO3).
+
+**Conflict found [V]:** `AC` is "Aral Sea" in the Projects API but "Africa" on DS04691 borrower rows, so the label given by
+the source wins over the code table.
+
+**Effect on the training universe (151 projects) [M]:** 137 direct, **5 legacy codes now mapped** (P155203 and P130975 TP→TLS,
+P159037 ZR→COD, P158413 YF→SRB, P145361 RY→YEM). Before, these had no country, so no `IN_COUNTRY` edge and no governance
+features. **9 regional projects** (3W, 3S, 3E, 3A, 7C) get an `IN_REGION` edge and `is_regional = true`. 0 unmapped.
+Supplier resolution (notebook 30) now uses the mapped ISO3 as its country key, so a firm in DS01004 (country name) and in
+DS00005 (country code) can match.

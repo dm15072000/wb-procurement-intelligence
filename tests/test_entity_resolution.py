@@ -165,3 +165,68 @@ def test_masked_flag_only_for_placeholder_without_id():
     assert [x["supplier_name_masked"] for x in m] == [True, True, False, False]
     assert m[0]["supplier_key"] != m[1]["supplier_key"]        # never merged with each other
     assert not any(i in (0, 1) or j in (0, 1) for i, j, _, _ in merges)
+
+
+# --- guards added after the full-data run (checkpoint c) ---------------------------------------------------------------
+
+def test_number_guard_blocks_numbered_siblings():
+    # Real-data false merges: "#24"/"#25", "Bureau 1"/"Bureau 16", "No.10"/"No.13", "#2"/"#7".
+    for a, b, c in [("HYDRAULIC CONSTR. CO. #24", "HYDRAULIC CONSTR. CO. #25", "VN"),
+                    ("SINOHYDRO BUREAU 1 CO.,LTD.", "Sinohydro Bureau 16 Co., Ltd", "CN"),
+                    ("CHINA RAILWAY NO.10 GROUP CO. LTD.", "CHINA RAILWAY NO.13TH GROUP CO. LTD", "CN"),
+                    ("MODULO COMUNITARIO DE ADOQUINADO # 2", "MODULO COMUNITARIO DE ADOQUINADO # 7", "NI")]:
+        st = {}
+        m, _ = resolve(_recs((a, c, None, ""), (b, c, None, "")), stats=st)
+        assert m[0]["supplier_key"] != m[1]["supplier_key"], (a, b)
+
+
+def test_jv_guard():
+    m, _ = resolve(_recs(("PT SURYA ABADI KONSULTAN", "ID", None, ""), ("JV PT SURYA ABADI KONSULTAN", "ID", None, "")))
+    assert m[0]["supplier_key"] != m[1]["supplier_key"]
+
+
+def test_r3_never_for_individuals_even_without_ids():
+    ics = "Individual Consultant Selection"
+    m, merges = resolve(_recs(("Mohamed Lemin Ahmed", "MR", None, ics), ("Mohamed Lemine Ahmed", "MR", None, ics)))
+    assert m[0]["supplier_key"] != m[1]["supplier_key"] and not merges
+
+
+def test_chain_guard_needs_similarity_to_canonical():
+    # A~B and B~C each pass 0.92, but C is not close enough to the cluster's canonical name A.
+    a, b, c = "KAMA INTEGRATD SERVICE", "KAMA INTEGRATED SERVICE", "KAMA INTERGRATED SERVICESS"   # 0.978, 0.939; a~c 0.917
+    from src.entity_resolution.suppliers import fuzzy_score, FUZZY_THRESHOLD
+    assert fuzzy_score(a, b) >= FUZZY_THRESHOLD and fuzzy_score(b, c) >= FUZZY_THRESHOLD > fuzzy_score(a, c)
+    st = {}
+    m, _ = resolve(_recs((a, "IN", None, ""), (b, "IN", None, ""), (c, "IN", None, "")), stats=st)
+    assert m[0]["supplier_key"] == m[1]["supplier_key"] != m[2]["supplier_key"]
+    assert st["R3_blocked_chain_canonical"] >= 1
+
+
+def test_shared_id_guard_keeps_dissimilar_names_apart():
+    # One supplier_id reused across different people (real-data "KUMAR" cluster pattern).
+    st = {}
+    m, _ = resolve(_recs(("RAJ KUMAR", "IN", "777", ""), ("RAJ KUMAR", "IN", "777", "Request for Quotations"),
+                         ("NEERAJ SHARMA", "IN", "777", ""), ("AJAY SINGH", "IN", "777", "")), stats=st)
+    assert m[0]["supplier_key"] == m[1]["supplier_key"]
+    assert len({m[0]["supplier_key"], m[2]["supplier_key"], m[3]["supplier_key"]}) == 3
+    assert st["R1_blocked_dissimilar_name_under_one_id"] == 2
+
+
+def test_common_name_guard():
+    # "RAJ KUMAR" with 5 different supplier_ids in India is a common name, not one firm.
+    recs = _recs(*[("RAJ KUMAR", "IN", str(k), "") for k in range(5)], ("RAJ KUMAR", "IN", None, ""))
+    st = {}
+    m, _ = resolve(recs, stats=st)
+    assert len({x["supplier_key"] for x in m}) == 6 and st["R2_blocked_common_name"] == 5
+    # Below the bar (2 IDs), the same exact name still merges, as before.
+    m2, _ = resolve(_recs(("BAHAGO SERVICES LIMITED", "NG", "1", ""), ("BAHAGO SERVICES LTD", "NG", "2", "")))
+    assert m2[0]["supplier_key"] == m2[1]["supplier_key"]
+    # Real-data regression: a FIRM registered under 6 IDs ("FRED ENGINEERING", IT) must still be one supplier.
+    m3, _ = resolve(_recs(*[("FRED ENGINEERING S.R.L.", "IT", str(k), "") for k in range(6)]))
+    assert len({x["supplier_key"] for x in m3}) == 1
+
+
+def test_person_like_names():
+    from src.entity_resolution.suppliers import is_person_like
+    assert is_person_like("RAJ KUMAR") and is_person_like("AJAY KUMAR SINGH")
+    assert not any(is_person_like(x) for x in ("FRED ENGINEERING", "EXPERIENS", "CAFI B", "FASO INGENIERIE", "HK MEDIA"))

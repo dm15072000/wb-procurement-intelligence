@@ -234,10 +234,32 @@ def test_link_requires_project_time_and_evidence():
     assert link_score(CONTRACT, _chunk("IN-UPPWD-14106-CW-RFB", doc_type="Procurement Plan"))[0] == 0
 
 
-def test_link_rule_records_evidence():
-    score, rule = link_score(CONTRACT, _chunk("GAWAR CONSTRUCTION delayed the Badaun Bijnaur works."),
-                             supplier_names=["GAWAR CONSTRUCTION"])
-    assert rule == "project+temporal+supplier_mention+description_overlap" and score == pytest.approx(0.7)
+def test_link_rule_records_evidence_and_strong_edge_type():
+    score, rule, edge = link_score(CONTRACT, _chunk("GAWAR CONSTRUCTION delayed the Badaun Bijnaur works."),
+                                   supplier_names=["GAWAR CONSTRUCTION"])
+    # Only 2 shared description words (< 3), so the evidence is the supplier mention alone.
+    assert rule == "project+temporal+supplier_mention" and edge == "DESCRIBES" and score == pytest.approx(0.6)
+
+
+def test_weak_link_needs_three_rare_words_and_weighs_less():
+    from src.graph.links import chunk_features, document_frequencies
+    c = dict(CONTRACT, ref_key=None)
+    hit = _chunk("Works on the Badaun Bilsi Bijnaur stretch slipped by six months.")
+    score, rule, edge = link_score(c, hit)
+    assert edge == "MAY_DESCRIBE" and rule.endswith("rare_words:3") and score <= 0.45
+    # With corpus frequencies: if "badaun" appears in most chunks it is not rare any more, so only 2 rare words remain.
+    corpus = [dict(_chunk(t), **chunk_features(_chunk(t))) for t in
+              ["Badaun district office."] * 50 + ["Unrelated text about rainfall."] * 50]
+    df, n = document_frequencies(corpus + [dict(hit, **chunk_features(hit))])
+    assert link_score(c, hit, df=df, n_chunks=n) == (0.0, None, None)
+
+
+def test_common_words_carry_no_weight():
+    from src.graph.links import rare_shared
+    df = {"rural": 900, "access": 950, "liangshuijing": 2, "laping": 1, "subgrade": 4}
+    w = rare_shared("Subgrade works rural access Liangshuijing to Laping", {"rural", "access", "liangshuijing", "laping", "subgrade"},
+                    df=df, n_chunks=1000)
+    assert set(w) == {"liangshuijing", "laping", "subgrade"} and w["laping"] > w["subgrade"]   # rarer = heavier
 
 
 def test_precomputed_chunk_features_give_same_score():
