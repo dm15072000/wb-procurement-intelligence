@@ -169,8 +169,15 @@ FROM {D}.chunks
 # MAGIC **Two edge types** (after the first run, where 99.9% of links rested on overlap of common words):
 # MAGIC - `DESCRIBES`: **strong**. The passage mentions the contract's reference number or its supplier.
 # MAGIC - `MAY_DESCRIBE`: **weak**, weight ≤ 0.45. The passage shares ≥ 3 **rare** words with the contract
-# MAGIC   description. "Rare" = appears in ≤ 1% of ALL chunks (document frequency measured here), so "rural", "road" and
-# MAGIC   district names carry no weight.
+# MAGIC   description. "Rare" = appears in ≤ 2% of the chunks of the SAME project (measured here), so "rural", "road",
+# MAGIC   district names and, in Mali, everyday French words carry no weight.
+# MAGIC
+# MAGIC **Fix pass after run 2 (one pass only, approved 2026-10-21):** run 2 had 11 strong links, of which ~7 were false
+# MAGIC (a person-like supplier name matching Bank staff lists), and weak links dominated by French words and acronym
+# MAGIC tables. Now: supplier names must be firm-like; staff, team and acronym sections never link; references match on
+# MAGIC token boundaries; rarity is per project; and `evidence` stores `chunk_id|matched text` so each link can be audited.
+# MAGIC Weak links are reported but kept **out of RAG evaluation**; retrieval relies on Vector Search with project/date
+# MAGIC filters, and graph links are supplementary context.
 
 # COMMAND ----------
 
@@ -184,12 +191,16 @@ for r in spark.sql(f"""SELECT a.contract_key, s.canonical_name FROM u_awards a J
                        WHERE s.kind = 'firm' AND NOT s.is_placeholder""").collect():
     names[r.contract_key].append(r.canonical_name)
 
-# Word document frequencies over ALL chunks (every doc type, every project): this is what defines "rare".
+# Word document frequencies PER PROJECT, over all of that project's chunks (every doc type): this defines "rare".
 all_chunks = [dict(r.asDict(), **links.chunk_features(r.asDict()))
               for r in spark.table(f"{D}.chunks").select("chunk_id", "project_id", "doc_type", "doc_date",
                                                           "section_path", "text").collect()]
-df, n_chunks = links.document_frequencies(all_chunks)
-print(f"document frequencies over {n_chunks:,} chunks; rare = in <= {max(1, int(links.RARE_DF_SHARE * n_chunks))} chunks")
+chunks_of = defaultdict(list)
+for ch in all_chunks:
+    chunks_of[ch["project_id"]].append(ch)
+dfs = {pid: links.document_frequencies(chs) for pid, chs in chunks_of.items()}
+print("rare-word limit per slice project (chunks):",
+      {pid: max(1, int(links.RARE_DF_SHARE * dfs[pid][1])) for pid in sorted(dfs) if pid in slice_ids})
 
 describes, compared = [], 0
 doc_types = set(links.LINK_DOC_TYPES)
@@ -200,13 +211,14 @@ for ch in all_chunks:
 for pid in slice_ids:
     for c in contracts.get(pid, []):
         sn = names.get(c["contract_key"], [])
+        df, n_chunks = dfs.get(pid, (None, None))
         for ch in by_project.get(pid, []):
             compared += 1
-            score, rule, edge = links.link_score(c, ch, sn, df=df, n_chunks=n_chunks)
+            score, rule, edge, matched = links.link_detail(c, ch, sn, df=df, n_chunks=n_chunks)
             if score:
                 describes.append({"src_id": f"chunk:{ch['chunk_id']}", "dst_id": f"contract:{c['contract_key']}",
                                   "edge_type": edge, "weight": score, "rule": rule,
-                                  "evidence": ch["chunk_id"], "available_from": ch["doc_date"]})
+                                  "evidence": f"{ch['chunk_id']}|{matched}", "available_from": ch["doc_date"]})
 if describes:
     spark.createDataFrame(describes, "src_id string, dst_id string, edge_type string, weight double, rule string, "
                           "evidence string, available_from date").write.mode("append").saveAsTable(f"{G}.edges")
@@ -217,6 +229,8 @@ desc_report = {"pairs_compared": compared, "slice_contracts": sum(len(v) for v i
                "contracts_with_strong_link": len({d["dst_id"] for d in strong}),
                "contracts_with_any_link": len({d["dst_id"] for d in describes}),
                "first_run_for_comparison": {"links": 11220, "contracts_linked": 1067, "overlap_only_share": 0.999},
+               "second_run_for_comparison": {"DESCRIBES": 11, "MAY_DESCRIBE": 137, "contracts_with_any_link": 72,
+                                             "strong_judged_correct": "3-4 of 11", "weak_judged_correct": "~2 of 27 seen"},
                "by_rule": dict(Counter(d["rule"].split("+rare_words")[0] + ("+rare_words" if "rare_words" in d["rule"] else "")
                                        for d in describes).most_common())}
 print(json.dumps(desc_report, indent=2))
@@ -234,9 +248,11 @@ import random
 text_of = {ch["chunk_id"]: ch for ch in all_chunks}
 desc_of = {c["contract_key"]: c["description"] for v in contracts.values() for c in v}
 def show(d, k):
-    ch = text_of[d["evidence"]]
+    chunk_id, matched = d["evidence"].split("|", 1)
+    ch = text_of[chunk_id]
     ck = d["dst_id"].split(":", 1)[1]
-    print(f"{k:2d}. {d['edge_type']} {d['weight']} | {d['rule']}\n    CONTRACT: {(desc_of.get(ck) or '')[:110]}\n"
+    print(f"{k:2d}. {d['edge_type']} {d['weight']} | {d['rule']}\n    MATCHED: {matched[:160]}\n"
+          f"    CONTRACT: {(desc_of.get(ck) or '')[:110]}\n"
           f"    PASSAGE ({ch['doc_type'][:40]}, {ch['doc_date']}, '{(ch['section_path'] or '')[:60]}'): "
           f"{' '.join((ch['text'] or '').split())[:260]}")
 print(f"=== all {len(strong)} strong (DESCRIBES) links ===")

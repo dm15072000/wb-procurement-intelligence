@@ -72,7 +72,7 @@ gold.edges(src_id STRING, dst_id STRING,
 | `ANNOUNCED` | Notice → Tender | same |
 | `HAS_SECTION` / `HAS_CHUNK` | Document → Section → Chunk | parse structure |
 | `DESCRIBES` | Chunk → Contract | **strong** contract-to-lesson link (below): reference-number or supplier mention. Attached to the *chunk* because that is where the evidence (and the citation) sits; its section is one `HAS_CHUNK` hop up. |
-| `MAY_DESCRIBE` | Chunk → Contract | **weak** link, weight ≤ 0.45: ≥ 3 shared *rare* words (in ≤ 1% of all chunks) with the contract description |
+| `MAY_DESCRIBE` | Chunk → Contract | **weak** link, weight ≤ 0.45: ≥ 3 shared *rare* words (in ≤ 2% of the same project's chunks) with the contract description. Reported, but **not** used in RAG evaluation |
 | `IN_REGION` | Project → Region | regional projects whose World Bank code is a region (`3W`, `7C`, …), not a country |
 | `RATES` / `TEACHES` | Rating / Lesson → Project, Section | extraction (Stage 5) |
 
@@ -86,11 +86,20 @@ A contract row and an ICR section have no shared key apart from the project. The
    ISRs, the first ISR dated after signing scores highest.
 3. **Text evidence:** the passage mentions the contract's reference number or its supplier's canonical name (**strong**
    → `DESCRIBES`), or shares ≥ 3 **rare** words with the contract description (**weak** → `MAY_DESCRIBE`, weight
-   capped at 0.45). "Rare" is measured: a word appears in ≤ 1% of all chunks, weighted by IDF, so common words such as
-   "rural", "road" and district names carry no weight. Lessons / key-factor / procurement sections add a small bonus.
+   capped at 0.45). "Rare" is measured: a word appears in ≤ 2% of the chunks of the same project, weighted by IDF, so
+   common words such as "rural", "road", district names and, in French-language projects, everyday French words carry
+   no weight. Lessons / key-factor / procurement sections add a small bonus.
    *Why the split:* the first full run made 11,220 links, 99.9% of them on overlap of common words [M].
+4. **Guards (after the run 2 review, one fix pass, no further tuning):** supplier names count only if firm-like (2+
+   words, not person-like); staff, team and acronym sections never link; reference numbers match on token boundaries
+   only. Run 2 [M]: 11 strong links, of which ~3–4 were judged correct (7 were a person-like supplier name matching
+   Bank staff lists); 137 weak links, ~2 of 27 reviewed correct (corpus-wide rarity made French words "rare").
 
-Each link edge stores its `weight`, its `rule` (e.g. `project+temporal+ref_mention`) and its evidence. This lets the
+**Role in RAG [P]:** retrieval relies on Vector Search over chunks with project / date / doc-type filters. Graph links
+are supplementary context (e.g. "this ISR passage cites your contract"), not the main retrieval path; `MAY_DESCRIBE`
+links are excluded from retrieval evaluation.
+
+Each link edge stores its `weight`, its `rule` (e.g. `project+temporal+ref_mention`) and its evidence (`chunk_id|matched text`, e.g. `…|ref:GYTJ201B`). This lets the
 app show *why* a lesson is linked to a contract, and lets us measure precision per edge type on a reviewed sample.
 
 ### Temporal rule (leakage) [P]
@@ -138,7 +147,24 @@ with `available_from ≤ T`. For predicting a tender's duration, T = the tender'
    - **JV:** no R3 merge between a JV-named and a non-JV record.
    - **Chain:** an R3 merge must also pass the threshold between the two clusters' canonical (shortest) names, so
      A≈B≈C chains can't drag in a C unlike A.
+   - **Distinctive word** (after the 50-pair review of the full run): the first distinctive word (not a business or
+     function word) must match, exactly when 3 characters or fewer ("IQ" vs "SI", "BP" vs "BT"); every other distinctive
+     word of 4+ characters needs a counterpart ≥ 0.8 similar, or must appear inside the other name. Blocks "SHAANXI
+     HUICAN …" vs "SHAANXI HUAXIANG …"; typos and split words still merge.
    - R3 is never applied to individuals, with or without an ID.
+
+### Measured on the full contract data (checkpoint c, run 2: before the distinctive-word guard) [M]
+
+| Measure | Value |
+|---|---|
+| Distinct supplier records / resolved suppliers | 322,655 / 271,828 |
+| Merges: R1 / R2 / R3 | 14,097 / 33,156 / 3,574 |
+| Largest cluster | 40 records (SMEC International; was 119 before the guards) |
+| Merges blocked by guards | shared-ID 116, common-name 1,014, numbers 686, JV 18, chain 208 |
+| **R3 precision, random sample of 50** | **43–47 of 50 correct (~86–94%)**: 2 wrong (#6 HUICAN/HUAXIANG, #48 IQ/SI), 1 probably wrong (#31 BP/BT), 4 uncertain. Provisional: assistant's review, to be spot-checked by the user. |
+
+The 5 largest clusters (SMEC, Ernst & Young, WAPCOS, Studi International, Deloitte India) are all genuine. Design choice:
+we resolve to **brand + country**, not legal entity, so "Deloitte … LLP" and "… Pvt Ltd" are one supplier.
 
 ### Measured on real data (Stage 2 download: 140 road projects, DS00005) [M]
 
@@ -159,7 +185,7 @@ tests had missed, now covered by regression tests: the placeholder mega-cluster 
 name-shape individual heuristic, and the dead R3 rule (0 merges under the original ID-blocking design).
 
 Code: `src/entity_resolution/suppliers.py`, `src/entity_resolution/keys.py`; tests: `tests/test_entity_resolution.py`
-(28 tests; 77 across the repo, all passing on 2026-10-21).
+(31 tests; 83 across the repo, all passing on 2026-10-21).
 
 ## 5. Missing-data handling [P]
 

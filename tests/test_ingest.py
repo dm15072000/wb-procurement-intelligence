@@ -369,3 +369,39 @@ def test_char_cap_keeps_every_chunk_under_the_embedding_limit():
     out = enforce_char_cap([{"text": long_row, "n_tokens": 0, "chunk_type": "table"}])
     assert len(out) > 1 and all(len(c["text"]) <= MAX_CHARS for c in out)
     assert "".join(c["text"] for c in out).replace(" ", "") == long_row.replace(" ", "")
+
+
+# --- link fixes A/B: cases from the checkpoint (c) review of real links ---------------------------------------------
+
+def test_person_like_supplier_names_and_staff_sections_never_link():
+    c = dict(CONTRACT, ref_key=None, description="PMGSY road Majhuwa")
+    staff = _chunk("Task Team Leader Sangeeta Kumari, Procurement Specialist Puneet Kapoor", section="ADM STAFF")
+    assert link_score(c, staff, ["SANGEETA KUMARI"]) == (0.0, None, None)
+    body = _chunk("Sangeeta Kumari visited the site.", section="IV. BANK PERFORMANCE")
+    assert link_score(c, body, ["SANGEETA KUMARI"]) == (0.0, None, None)       # person-like name: not evidence
+    assert link_score(c, _chunk("ROADMAINT finished the pilot."), ["ROADMAINT"]) == (0.0, None, None)   # one word
+    acr = _chunk("GAWAR CONSTRUCTION | AGETIER | Agence ...", section="ABBREVIATIONS AND ACRONYMS")
+    assert link_score(c, acr, ["GAWAR CONSTRUCTION"]) == (0.0, None, None)
+
+
+def test_reference_matches_on_token_boundaries_and_returns_matched_text():
+    from src.graph.links import link_detail
+    c = dict(CONTRACT, ref_key="HAMPGD02", description="YHB cloud computation data center")
+    score, rule, edge, matched = link_detail(c, _chunk("Contract HAMP-GD-02 was delivered."))
+    assert edge == "DESCRIBES" and matched == "ref:HAMP-GD-02"
+    assert link_detail(c, _chunk("Contract HAMP GD 02 was delivered."))[3] == "ref:HAMP GD 02"
+    assert link_score(c, _chunk("Contract HAMP-GD-021 was delivered.")) == (0.0, None, None)   # inside a longer code
+    assert link_score(c, _chunk("See XHAMPGD02 annex.")) == (0.0, None, None)
+
+
+def test_rarity_is_per_project_so_everyday_french_words_are_not_rare():
+    from src.graph.links import chunk_features, document_frequencies, link_detail
+    c = dict(CONTRACT, ref_key=None, description="Travaux d’aménagement de pistes rurales à Kadiolo")
+    hit = _chunk("Les travaux d'aménagement des pistes avancent; Kadiolo reste en retard.")
+    # a French project: these words appear in most of its chunks, so they are not rare for this project
+    project = [dict(_chunk(t), **chunk_features(_chunk(t))) for t in
+               ["Les travaux d'aménagement des pistes rurales."] * 60 + ["Rapport annuel."] * 40]
+    df, n = document_frequencies(project + [dict(hit, **chunk_features(hit))])
+    assert link_score(c, hit, df=df, n_chunks=n) == (0.0, None, None)
+    # accents are folded before tokenizing: "aménagement" is one word
+    assert "amenagement" in link_detail(c, hit)[3]

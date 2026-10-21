@@ -126,6 +126,56 @@ def is_person_like(norm_name):
     return 2 <= len(toks) <= 3 and all(t.isalpha() and len(t) >= 3 for t in toks) and not set(toks) & BUSINESS_WORDS
 
 
+# Function words (several languages), ignored when comparing distinctive words.
+FUNCTION_WORDS = {"AND", "OF", "THE", "FOR", "DE", "DU", "DES", "LA", "LE", "LES", "ET", "EN", "Y", "E", "D", "L",
+                  "DI", "DA", "DO", "DEL", "POUR", "AU", "AUX"}
+DISTINCTIVE_MIN = 0.8   # a distinctive word needs a counterpart at least this similar in the other name
+
+
+def _tokens(norm_name):
+    """Tokens with runs of single letters joined ('K K ENTERPRISE' -> ['KK', 'ENTERPRISE']), legal forms dropped."""
+    out, run = [], ""
+    for t in norm_name.split():
+        if len(t) == 1 and t.isalpha() and t not in ("Y", "E"):
+            run += t
+            continue
+        if run:
+            out.append(run)
+            run = ""
+        out.append(t)
+    if run:
+        out.append(run)
+    return [t for t in out if t not in LEGAL_FORMS]
+
+
+def distinctive_match(na, nb):
+    """R3 guard (checkpoint c review of 50 fuzzy pairs): the overall similarity of two names can be high only because
+    of shared generic words ('SHAANXI HUICAN CONSTRUCTION ENGINEERING' vs 'SHAANXI HUAXIANG CONSTRUCTION
+    ENGINEERING'). So the distinctive words must agree too:
+      1. the first distinctive word (not a business or function word) must match: exactly when either is 3 characters
+         or shorter ('IQ' vs 'SI', 'BP' vs 'BT'), otherwise with similarity >= DISTINCTIVE_MIN;
+      2. every other distinctive word of 4+ characters, in either name, needs a counterpart in the other name with
+         similarity >= DISTINCTIVE_MIN, or must appear inside it ('INFOSOLUTIONS' vs 'INFO SOLUTIONS').
+    Typos still pass ('CHAKLE'/'CHAKILE', 'TECHNILOGIES'/'TECHNOLOGIES', 'GHNAN'/'GHANA')."""
+    ta, tb = _tokens(na), _tokens(nb)
+    da = [t for t in ta if t not in BUSINESS_WORDS and t not in FUNCTION_WORDS and not t.isdigit()]
+    db = [t for t in tb if t not in BUSINESS_WORDS and t not in FUNCTION_WORDS and not t.isdigit()]
+    if not da or not db:
+        return True   # nothing distinctive to compare; the other R3 checks decide
+    fa, fb = da[0], db[0]
+    if min(len(fa), len(fb)) <= 3:
+        if fa != fb:
+            return False
+    elif SequenceMatcher(None, fa, fb).ratio() < DISTINCTIVE_MIN:
+        return False
+
+    def covered(t, others, joined):
+        return t in joined or any(SequenceMatcher(None, t, u).ratio() >= DISTINCTIVE_MIN for u in others)
+    ja, jb = "".join(ta), "".join(tb)
+    return (all(covered(t, tb, jb) for t in da[1:] if len(t) >= 4)
+            and all(covered(t, ta, ja) for t in db[1:] if len(t) >= 4))
+
+
 def _numbers(name):
     """Numbers in a name: 'CHINA RAILWAY NO 13TH GROUP' -> {'13'}; 'HYDRAULIC CONSTR CO 24' -> {'24'}."""
     return set(re.findall(r"\d+", name or ""))
@@ -139,11 +189,12 @@ def resolve(records, stats=None):
     Returns (mapping, merges):
       mapping: one dict per input record: supplier_key, norm_name, kind, is_jv_name, rule, score
       merges:  list of (i, j, rule, score) union decisions, for auditing / sampling / rule chains
-    Guards added after the full-data run (checkpoint c): shared-ID, common-name, number, JV and chain guards.
+    Guards added after the full-data run (checkpoint c): shared-ID, common-name, number, JV, distinctive-word and chain
+    guards.
     """
     stats = stats if stats is not None else {}
     for k in ("R1_blocked_dissimilar_name_under_one_id", "R2_blocked_common_name", "R3_blocked_numbers_differ",
-              "R3_blocked_jv_vs_non_jv", "R3_blocked_chain_canonical"):
+              "R3_blocked_jv_vs_non_jv", "R3_blocked_distinctive_word", "R3_blocked_chain_canonical"):
         stats.setdefault(k, 0)
     n = len(records)
     norm = [normalize_name(r.get("raw_name")) for r in records]
@@ -241,6 +292,9 @@ def resolve(records, stats=None):
                     continue
                 if jv[ia] != jv[ib]:                    # "JV PT SURYA ABADI" vs "PT SURYA ABADI"
                     stats["R3_blocked_jv_vs_non_jv"] += 1
+                    continue
+                if not distinctive_match(na, nb):       # "SHAANXI HUICAN ..." vs "SHAANXI HUAXIANG ..."
+                    stats["R3_blocked_distinctive_word"] += 1
                     continue
                 ca, cb = canon_of(ia), canon_of(ib)
                 if fuzzy_score(ca, cb) < thr or _numbers(ca) != _numbers(cb):

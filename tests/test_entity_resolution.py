@@ -230,3 +230,40 @@ def test_person_like_names():
     from src.entity_resolution.suppliers import is_person_like
     assert is_person_like("RAJ KUMAR") and is_person_like("AJAY KUMAR SINGH")
     assert not any(is_person_like(x) for x in ("FRED ENGINEERING", "EXPERIENS", "CAFI B", "FASO INGENIERIE", "HK MEDIA"))
+
+
+# --- distinctive-word guard: cases from the checkpoint (c) review of 50 real R3 pairs --------------------------------
+
+def test_distinctive_guard_blocks_the_wrong_merges_from_the_review():
+    from src.entity_resolution.suppliers import distinctive_match
+    for a, b in (("SHAANXI HUICAN CONSTRUCTION ENGINEERING CO.,", "SHAANXI HUAXIANG CONSTRUCTION ENGINEERING CO."),  # #6
+                 ("BP NIRMAN SEWA", "B.T. NIRMAN SEWA PVT. LTD."),                                               # #31
+                 ("IQ CONSULTING", "SI CONSULTING")):                                                            # #48
+        assert not distinctive_match(normalize_name(a), normalize_name(b)), (a, b)
+
+
+def test_distinctive_guard_keeps_typos_split_words_and_initials():
+    from src.entity_resolution.suppliers import distinctive_match
+    for a, b in (("ASCHALE CHAKLE STATIONERY", "ASCHALE CHAKILE STATIONERY"),
+                 ("LINK3 TECHNOLOGIES LIMITED", "LINK3 TECHNILOGIES LTD."),
+                 ("SUNTECH INFOSOLUTIONS", "M/S SUNTECH INFO SOLUTIONS,"),
+                 ("M/S K.K. ENTERPRISE", "K.K ENTERPRISE"),
+                 ("WVP CONSTRUCTION", "W.V.P. CONSTRUCTIONS"),
+                 ("PRO-KID TEK COMPUTER TECHNOLOGY", "PRO KID TECK COMPUTER TECHNOLOGY"),
+                 ("DIZENGOFF GHNAN LTD.", "DIZENGOFF GHANA LIMITED"),
+                 ("LMT LIGHTMESSTECHNIK GMBH", "LMT LICHTMESSTECHNIK GMBH"),
+                 ("SHENZHEN TOPKING INDUSTIAL CO. LTD.", "SHENZHEN TOPKIN INDUSTRIAL CO., LTD"),
+                 ("BUREAU D'ETUDES ET CONSEILS EN GESTION (BECG)", "BUREAU D’ETUDES ET DE CONSEILS EN GESTION (BECG)"),
+                 ("AUDITORIAS E INGERIERIAS SA-AUDING", "AUDITORIAS E INGENIERIA, S.A (AUDING)"),
+                 ("HEBEI HUATONG WIRES AND CABLES MANUFACTURING", "HEBEI HUATONG WIRE AND CABLE MANUFACTURE"),
+                 ("GENERAL ELECTRO-MECANIQUE (PVT) LTD.", "GENERAL ELECTRO MECHANIQUE")):
+        assert distinctive_match(normalize_name(a), normalize_name(b)), (a, b)
+
+
+def test_resolve_counts_distinctive_word_blocks():
+    stats = {}
+    m, _ = resolve(_recs(("SHAANXI HUICAN CONSTRUCTION ENGINEERING CO.", "CHN", None, ""),
+                         ("SHAANXI HUAXIANG CONSTRUCTION ENGINEERING CO.", "CHN", None, "")), stats=stats)
+    assert m[0]["supplier_key"] != m[1]["supplier_key"] and stats["R3_blocked_distinctive_word"] == 1
+    m, _ = resolve(_recs(("LINK3 TECHNOLOGIES LIMITED", "BGD", None, ""), ("LINK3 TECHNILOGIES LTD.", "BGD", None, "")))
+    assert m[0]["supplier_key"] == m[1]["supplier_key"]

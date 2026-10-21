@@ -18,6 +18,9 @@
 # MAGIC - **number:** no R3 merge when the names contain different numbers;
 # MAGIC - **JV:** no R3 merge between a JV-named and a non-JV record;
 # MAGIC - **chain:** an R3 merge must also pass between the two clusters' canonical names;
+# MAGIC - **distinctive word** (added after the 50-pair review of run 2): the first distinctive word must match (exactly
+# MAGIC   if 3 characters or fewer: "IQ" vs "SI"), and every other distinctive word needs a close counterpart
+# MAGIC   ("SHAANXI HUICAN …" vs "SHAANXI HUAXIANG …" no longer merge);
 # MAGIC - R3 is never applied to individuals, with or without an ID.
 # MAGIC
 # MAGIC **Why it matters:** supplier history ("has this firm been late before?") is only as good as this grouping. A wrong
@@ -136,6 +139,8 @@ er_report = {
     "cluster_size_counts": dict(sorted(Counter(keys_.values()).items())[:12]), "largest_cluster": max(keys_.values()),
     "guards_blocked": guard_stats,
     "run_before_guards_for_comparison": {"suppliers": 270474, "R1": 14213, "R2": 33949, "R3": 4019, "largest_cluster": 119},
+    # run 2 = guards without the distinctive-word guard; 50-pair R3 review: 43-47 of 50 correct (~86-94%), provisional
+    "run_2_for_comparison": {"suppliers": 271828, "R1": 14097, "R2": 33156, "R3": 3574, "largest_cluster": 40},
 }
 print(json.dumps(er_report, indent=2))
 print(f"\nR3 review sample ({len(sample)} of {len(r3)}):")
