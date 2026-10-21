@@ -91,15 +91,42 @@ def test_joint_venture_rows_become_one_contract():
     contracts, awards = transform.contracts_from_awards(jv, "DS00005")
     assert len(contracts) == 1 and len(awards) == 2
     c = contracts[0]
-    assert c["contract_key"] == "DS00005:1543858" and c["n_suppliers"] == 2
+    assert c["contract_key"] == "C:1543858" and c["n_suppliers"] == 2 and c["coverage_status"] == "full"
     assert c["total_amount_usd"] == pytest.approx(323077.78) and c["ref_key"] == "UDPPPGQCBS2016412"
 
 
-def test_ds01004_has_no_review_type():
+def test_review_type_null_or_absent_is_unknown_never_guessed():
     row = {"contract_number": "1512302", "project_id": "P102172", "contract_signing_date": "31-Jul-2013",
            "fiscal_year": 2014, "supplier_contract_amount": 16671, "supplier": "ALI OKTAY", "review_type": "Prior"}
-    contracts, _ = transform.contracts_from_awards([row], "DS01004")
-    assert contracts[0]["review_type"] is None and contracts[0]["total_amount_usd"] == 16671
+    contracts, _ = transform.contracts_from_awards([row], "DS01004")          # DS01004 has no review-type field
+    assert contracts[0]["review_type"] == "unknown" and contracts[0]["total_amount_usd"] == 16671
+    assert contracts[0]["coverage_status"] == "prior_review_only"
+    step, _ = transform.contracts_from_awards([dict(AWARD, review_type=None, fiscal_year=2017)], "DS04691")
+    assert step[0]["review_type"] == "unknown" and step[0]["coverage_status"] == "partial_likely_incomplete"
+
+
+def test_ds04691_uses_step_schema():
+    contracts, awards = transform.contracts_from_awards([dict(AWARD, fiscal_year=2018)], "DS04691")
+    assert contracts[0]["contract_key"] == "C:1543858" and contracts[0]["review_type"] == "Prior"
+    assert awards[0]["amount_usd"] == pytest.approx(161538.89) and contracts[0]["coverage_status"] == "partial"
+
+
+def test_merge_datasets_dedupes_by_number_with_precedence_and_reports_overlap():
+    new, new_aw = transform.contracts_from_awards([AWARD], "DS00005")
+    mid, mid_aw = transform.contracts_from_awards([dict(AWARD, fiscal_year=2019, contract_signing_date="01-Jun-2019"),
+                                                   dict(AWARD, wb_contract_number="999", fiscal_year=2018)], "DS04691")
+    old, old_aw = transform.contracts_from_awards([{"contract_number": "1543858", "project_id": "P000001",
+                                                    "contract_signing_date": "31-Jul-2013", "fiscal_year": 2014,
+                                                    "supplier_contract_amount": 5, "supplier": "X"}], "DS01004")
+    contracts, awards, rep = transform.merge_datasets({"DS00005": (new, new_aw), "DS04691": (mid, mid_aw),
+                                                       "DS01004": (old, old_aw)})
+    by = {c["contract_key"]: c for c in contracts}
+    assert len(contracts) == 2 and by["C:1543858"]["source_dataset"] == "DS00005"
+    assert by["C:1543858"]["also_in"] == ["DS04691", "DS01004"]
+    assert rep["contracts_by_dataset_combination"] == {"DS00005+DS04691+DS01004": 1, "DS04691": 1}
+    assert rep["overlap_conflicts"] == {"project_differs": 1, "signing_date_differs": 1}
+    # Only the kept copy's awards survive: no double-counted amounts.
+    assert sum(a["contract_key"] == "C:1543858" for a in awards) == 1 and len(awards) == 2
 
 
 def _c(key, ref, signed, rt="Prior", pid="P1"):
@@ -107,7 +134,7 @@ def _c(key, ref, signed, rt="Prior", pid="P1"):
 
 
 def _n(ref, d, t="Invitation for Bids", pid="P1"):
-    return {"notice_type": t, "tender_key": f"{pid}:{ref}", "notice_date": d}
+    return {"notice_type": t, "tender_key": f"{pid}:{ref}", "notice_date": d, "project_id": pid}
 
 
 def test_tender_durations_drop_and_count_bad_values():
@@ -121,14 +148,17 @@ def test_tender_durations_drop_and_count_bad_values():
     assert rep["Post"]["matched"] == 0   # a Contract Award notice is not a start notice
 
 
-def test_fy_activity_gap_is_null_not_zero():
-    contracts = [{"project_id": "P1", "fiscal_year": 2016, "total_amount_usd": 10.0},
-                 {"project_id": "P1", "fiscal_year": 2020, "total_amount_usd": 5.0}]
-    rows = {r["fiscal_year"]: r for r in transform.fy_activity(contracts, 2015, 2021)}
-    assert rows[2016]["n_contracts"] == 1 and rows[2015]["n_contracts"] == 0       # a real zero outside the gap
-    for fy in (2017, 2018, 2019):
-        assert rows[fy]["n_contracts"] is None and rows[fy]["amount_usd"] is None and rows[fy]["coverage_gap"]
-    assert rows[2020]["amount_usd"] == 5.0 and not rows[2020]["coverage_gap"]
+def test_fy_activity_flags_partial_coverage_and_measures_it():
+    contracts = [{"project_id": "P1", "fiscal_year": 2018, "total_amount_usd": 10.0, "ref_key": "R1"},
+                 {"project_id": "P1", "fiscal_year": 2020, "total_amount_usd": 5.0, "ref_key": "R2"}]
+    notices = [_n("R1", date(2018, 3, 1), "Contract Award"), _n("R9", date(2018, 4, 1), "Contract Award"),
+               _n("R2", date(2019, 8, 1), "Contract Award")]       # 2019-08-01 is FY2020
+    rows = {r["fiscal_year"]: r for r in transform.fy_activity(contracts, notices, 2016, 2021)}
+    assert rows[2018]["n_contracts"] == 1 and rows[2018]["coverage_status"] == "partial"
+    assert rows[2018]["award_notices"] == 2 and rows[2018]["notice_coverage_pct"] == 0.5   # 1 of 2 awards found
+    assert rows[2017]["coverage_status"] == "partial_likely_incomplete" and rows[2017]["notice_coverage_pct"] is None
+    assert rows[2020]["notice_coverage_pct"] == 1.0 and rows[2020]["coverage_status"] == "full"
+    assert rows[2016]["coverage_status"] == "prior_review_only"
 
 
 def test_governance_and_country_rows():

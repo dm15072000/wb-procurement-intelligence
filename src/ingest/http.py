@@ -50,7 +50,8 @@ def get(url, *, as_json=True, max_tries=7, base=5.0, pause=1.5, timeout=180, ope
 # --- paginators for the verified APIs (docs/04_data_sources.md) -------------------------------------------------------
 
 FONE = "https://datacatalogapi.worldbank.org/dexapps/fone/api/apiservice"
-FONE_RESOURCES = {"DS00005": "RS00005", "DS01004": "RS00934"}  # verified in Stage 2
+FONE_RESOURCES = {"DS00005": "RS00005", "DS01004": "RS00934",  # verified in Stage 2
+                  "DS04691": "RS03933"}                        # verified 2026-10-21 (FY2017-FY2019)
 
 
 def fone_pages(dataset, resource=None, filter_expr=None, top=1000, **kw):

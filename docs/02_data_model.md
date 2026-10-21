@@ -12,8 +12,9 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
    user; a missed merge only loses some history. So fuzzy matching is conservative, and every merge can be audited.
 3. **Every fact carries the date it became public** (`available_from`). Any query "as of date T" can filter on it, which
    is how leakage rules are enforced. For example, an ICR published in 2024 cannot inform a 2019 prediction.
-4. **Missing ≠ zero.** The FY2017–FY2019 contract gap and absent CPIA values are stored as NULL with an explicit flag,
-   never as 0 (CLAUDE.md data rule).
+4. **Missing ≠ zero, and partial ≠ complete.** Absent values (e.g. CPIA) are NULL with an explicit flag, never 0. Contract
+   coverage varies by fiscal year (`coverage_status`: full / partial / partial_likely_incomplete / prior_review_only),
+   is measured against published award notices, and travels with every aggregate (CLAUDE.md data rules).
 5. **The graph is two Delta tables** (`gold.nodes`, `gold.edges`) built from the relational silver tables. No graph
    database: our queries are 1–3 hops.
 
@@ -23,7 +24,7 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 |---|---|---|---|---|
 | **Country** | `iso3` (e.g. `IND`) | World Bank country API [V] | iso2, name, lending_type (IDA/IBRD/Blend), income_level, region | Crosswalk iso2 ↔ iso3 ↔ WB code. Contract `borrower_country_code` is a *WB code that can differ from ISO* [V: DS00005 metadata], so it is mapped through the crosswalk, not assumed. |
 | **Project** | `project_id` (`P` + 6 digits) [V] | Projects API [V] | name, country iso3, approval FY, board approval date, closing date, status, sectors + % shares, `roads_pct`, IDA/IBRD amounts, lending instrument, env. category, implementing agency | `roads_pct` = share for sector "Rural and Inter-Urban Roads" (slice rule: ≥ 25%). Multi-country projects keep a project→country edge per country. |
-| **Contract** | `contract_key` = `DS00005:{wb_contract_number}` or `DS01004:{contract_number}` [V] | DS00005, DS01004 | project_id, borrower reference no., description, signing date, fiscal year, category, method, review type (DS00005 only), **total amount** (sum over suppliers), n_suppliers, `source_dataset` | DS00005 lists a joint venture as **one row per member, with the value split equally** [V: metadata], so a contract is many rows, aggregated to one. |
+| **Contract** | `contract_key` = `C:{contract number}`: the number alone, so a contract listed in several datasets is one contract | DS00005, DS04691, DS01004 (de-duplicated; precedence DS00005 > DS04691 > DS01004) | project_id, borrower reference no., description, signing date, fiscal year, `coverage_status`, category, method, review type (`"unknown"` when null or absent), **total amount** (sum over suppliers), n_suppliers, `source_dataset`, `also_in` | DS00005 lists a joint venture as **one row per member, with the value split equally** [V: metadata], so a contract is many rows, aggregated to one. |
 | **ContractAward** | (`contract_key`, `supplier_key`) | DS00005, DS01004 | supplier raw name, supplier_id (DS00005 only), supplier country, amount USD | The link between a contract and each supplier. |
 | **Supplier** | `supplier_key` (`S` + hash of the resolved cluster) | resolution, §4 | canonical name, country, kind (`firm` / `individual`), source supplier_ids, n_name_variants | DS01004 has **no supplier_id** [V], so name resolution is needed. |
 | **Tender** | `tender_key` = `{project_id}:{normalized reference}` | procurement notices + contracts | first notice date, notice types seen, n_IFB_notices | Joins notices to contracts on project ID + normalized reference number (H1 method). |
@@ -140,13 +141,14 @@ tests had missed, now covered by regression tests: the placeholder mega-cluster 
 name-shape individual heuristic, and the dead R3 rule (0 merges under the original ID-blocking design).
 
 Code: `src/entity_resolution/suppliers.py`, `src/entity_resolution/keys.py`; tests: `tests/test_entity_resolution.py`
-(19 tests; 43 across the repo, all passing on 2026-10-21).
+(21 tests; 47 across the repo, all passing on 2026-10-21).
 
 ## 5. Missing-data handling [P]
 
 | Case | Stored as | Never |
 |---|---|---|
-| FY2017–FY2019 contracts (both datasets empty [V]) | Fiscal-year aggregates have rows for FY2017–19 with `value = NULL`, `coverage_gap = true` | 0 contracts / $0 |
+| FY2017–FY2019 contracts (DS04691, partial; FY2017 likely incomplete) | Real counts, plus `coverage_status` and measured `notice_coverage_pct` per project-FY (`gold.contract_activity_fy`) and per FY (`gold.contract_coverage_fy`) | a zero in a partial year read as "no activity" |
 | CPIA absent (most IBRD countries) | `value = NULL`, `is_missing = true` | imputed or 0 |
-| Review type absent (DS01004) | `NULL` | assumed "Prior" (although DS01004 is prior-review only by description, the field itself is absent) |
+| Review type null (STEP) or absent (DS01004) | `"unknown"`, counted in the reports | assumed "Prior" (although DS01004 is prior-review only by description, the field itself is absent) |
+| Supplier identity unknowable: placeholder name AND no supplier_id (`supplier_name_masked = true`) | Never merged; every supplier-history feature NULL | 0 past contracts / "clean record" |
 | PAD absent under that doc type (9 of 60 projects [M]) | `pad_doc_id = NULL`; fallback search under "Project Paper" logged | silently using another document |

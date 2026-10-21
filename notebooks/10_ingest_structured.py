@@ -130,8 +130,10 @@ ingest_paged("projects", projects_from)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Contract awards: DS00005 (FY2020+, all IPF) and DS01004 (FY2001–FY2016, prior review only)
-# MAGIC Full datasets (both are small enough), so bronze is a faithful copy. Silver keeps what the models need.
+# MAGIC ## 3. Contract awards: DS00005 (FY2020+), DS04691 (FY2017–FY2019), DS01004 (FY2001–FY2016, prior review only)
+# MAGIC Full datasets (all small enough), so bronze is a faithful copy. Silver keeps what the models need.
+# MAGIC DS04691 was found and verified on 2026-10-21 (63,912 rows, same STEP schema as DS00005) and added by decision
+# MAGIC (Option A). On a re-run, the sources already downloaded are skipped; only DS04691 is fetched.
 
 # COMMAND ----------
 
@@ -149,6 +151,7 @@ def fone_from(dataset):
     return factory
 
 ingest_paged("ds00005_contract_awards", fone_from("DS00005"))
+ingest_paged("ds04691_contract_awards", fone_from("DS04691"))
 ingest_paged("ds01004_contract_awards", fone_from("DS01004"))
 
 # COMMAND ----------

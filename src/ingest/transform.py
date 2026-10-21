@@ -75,11 +75,12 @@ def contracts_from_awards(rows, source):
     DS00005 lists a joint venture as one row per member with the value split equally (verified), so one contract is
     many rows. Contracts get the summed amount and the supplier count; awards keep one row per supplier.
     """
-    num_field = "wb_contract_number" if source == "DS00005" else "contract_number"
-    amt_field = "supplier_contract_amount_usd" if source == "DS00005" else "supplier_contract_amount"
+    step = source in keys.STEP_DATASETS   # DS00005 and DS04691 share the STEP schema (verified)
+    num_field = "wb_contract_number" if step else "contract_number"
+    amt_field = "supplier_contract_amount_usd" if step else "supplier_contract_amount"
     grouped = defaultdict(list)
     for r in rows:
-        ck = keys.contract_key(source, r.get(num_field))
+        ck = keys.contract_key(r.get(num_field))
         if ck:
             grouped[ck].append(r)
     contracts, awards = [], []
@@ -98,7 +99,11 @@ def contracts_from_awards(rows, source):
             "fiscal_year": first.get("fiscal_year") if isinstance(first.get("fiscal_year"), int) else (keys.fiscal_year(signed) if signed else None),
             "procurement_category": first.get("procurement_category"),
             "procurement_method": first.get("procurement_method"),
-            "review_type": first.get("review_type") if source == "DS00005" else None,  # DS01004 has no such field
+            # Null review type is stored as "unknown", never guessed. DS01004 has no review-type field at all, so its
+            # contracts are "unknown" too, even though the dataset is described as prior-review only.
+            "review_type": (first.get("review_type") or "unknown") if step else "unknown",
+            "coverage_status": keys.coverage_status(first.get("fiscal_year") if isinstance(first.get("fiscal_year"), int)
+                                                    else (keys.fiscal_year(signed) if signed else None)),
             "borrower_country": first.get("borrower_country"),
             "borrower_country_code": first.get("borrower_country_code"),
             "total_amount_usd": sum(a for a in amounts if a is not None) if any(a is not None for a in amounts) else None,
@@ -115,6 +120,40 @@ def contracts_from_awards(rows, source):
                 "amount_usd": a,
             })
     return contracts, awards
+
+
+def merge_datasets(per_source):
+    """De-duplicate contracts across datasets by contract number.
+
+    per_source: {"DS00005": (contracts, awards), "DS04691": (...), "DS01004": (...)}.
+    When a contract number appears in several datasets, ONE copy is kept, by precedence DS00005 > DS04691 > DS01004
+    (newest, richest snapshot first), and only that copy's awards are kept, so amounts are never double-counted.
+    Returns (contracts, awards, report): report counts contracts per combination of datasets, and among overlaps how
+    many disagree on project or signing date.
+    """
+    seen = defaultdict(dict)  # contract_key -> {source: contract}
+    for src in keys.CONTRACT_DATASETS:
+        for c in per_source.get(src, ([], []))[0]:
+            seen[c["contract_key"]][src] = c
+    contracts, chosen = [], {}
+    combos, conflicts = defaultdict(int), {"project_differs": 0, "signing_date_differs": 0}
+    for ck, by_src in seen.items():
+        srcs = [s for s in keys.CONTRACT_DATASETS if s in by_src]
+        combos["+".join(srcs)] += 1
+        keep = by_src[srcs[0]]
+        if len(srcs) > 1:
+            if len({by_src[s]["project_id"] for s in srcs}) > 1:
+                conflicts["project_differs"] += 1
+            if len({by_src[s]["signing_date"] for s in srcs}) > 1:
+                conflicts["signing_date_differs"] += 1
+        contracts.append(dict(keep, also_in=srcs[1:]))
+        chosen[ck] = srcs[0]
+    awards = [a for src in keys.CONTRACT_DATASETS for a in per_source.get(src, ([], []))[1]
+              if chosen.get(a["contract_key"]) == src]
+    report = {"contracts_by_dataset_combination": dict(combos), "overlap_conflicts": conflicts,
+              "contracts_after_dedup": len(contracts),
+              "contracts_before_dedup": sum(len(v[0]) for v in per_source.values())}
+    return contracts, awards, report
 
 
 def notice_row(n):
@@ -176,11 +215,33 @@ def tender_durations(contracts, notices, max_days=1095):
     return rows, {k: dict(v) for k, v in report.items()}
 
 
-def fy_activity(contracts, fy_from, fy_to, group_keys=("project_id",)):
-    """Contract counts and value per group and fiscal year, with the FY2017-FY2019 gap stored as NULL + flag.
+def notice_coverage(contracts, notices, group_keys=()):
+    """Measured coverage of the contract data, from an INDEPENDENT source: of the 'Contract Award' notices published in
+    a fiscal year, what share match a contract in our data (project ID + normalized reference)?
 
-    Every (group, FY) in range gets a row. Gap years: n_contracts = None, amount = None, coverage_gap = True. Non-gap years
-    with no contracts are a real 0 (the datasets cover those years).
+    Returns {(group..., fiscal_year): {"award_notices", "matched", "coverage_pct"}}. coverage_pct is None when there
+    were no award notices (unknown, not 0%). It covers only contracts that got a published award notice (mostly larger
+    / prior-review ones), so it is an indicator of completeness, not an exact census.
+    """
+    have = {f"{c['project_id']}:{c['ref_key']}" for c in contracts if c.get("project_id") and c.get("ref_key")}
+    out = defaultdict(lambda: {"award_notices": 0, "matched": 0})
+    for n in notices:
+        if n.get("notice_type") != "Contract Award" or not n.get("tender_key") or not n.get("notice_date"):
+            continue
+        g = tuple(n.get(k) for k in group_keys) + (keys.fiscal_year(n["notice_date"]),)
+        out[g]["award_notices"] += 1
+        out[g]["matched"] += n["tender_key"] in have
+    for v in out.values():
+        v["coverage_pct"] = round(v["matched"] / v["award_notices"], 3) if v["award_notices"] else None
+    return dict(out)
+
+
+def fy_activity(contracts, notices, fy_from, fy_to, group_keys=("project_id",)):
+    """Contract counts and value per group and fiscal year, with a coverage status and a MEASURED coverage figure.
+
+    FY2017-19 are no longer NULL (DS04691 covers them, decision 2026-10-21) but flagged partial; FY2017 is flagged
+    likely incomplete (STEP rollout). Zero contracts in a year means "none recorded", and must be read together with
+    coverage_status and notice_coverage_pct, never as "no activity" on its own.
     """
     agg = defaultdict(lambda: [0, 0.0])
     groups = set()
@@ -191,14 +252,16 @@ def fy_activity(contracts, fy_from, fy_to, group_keys=("project_id",)):
         if fy is not None:
             agg[(g, fy)][0] += 1
             agg[(g, fy)][1] += c.get("total_amount_usd") or 0.0
+    cov = notice_coverage(contracts, notices, group_keys)
     out = []
     for g in sorted(groups, key=str):
         for fy in range(fy_from, fy_to + 1):
-            gap = keys.in_contract_gap(fy)
             n, amt = agg.get((g, fy), (0, 0.0))
+            nc = cov.get(g + (fy,), {"award_notices": 0, "matched": 0, "coverage_pct": None})
             row = dict(zip(group_keys, g))
-            row.update({"fiscal_year": fy, "coverage_gap": gap,
-                        "n_contracts": None if gap else n, "amount_usd": None if gap else amt})
+            row.update({"fiscal_year": fy, "coverage_status": keys.coverage_status(fy),
+                        "n_contracts": n, "amount_usd": amt, "award_notices": nc["award_notices"],
+                        "award_notices_matched": nc["matched"], "notice_coverage_pct": nc["coverage_pct"]})
             out.append(row)
     return out
 

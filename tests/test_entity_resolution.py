@@ -19,9 +19,9 @@ def test_ref_and_tender_key():
     assert keys.tender_key("bad", "X1") is None
 
 
-def test_contract_key():
-    assert keys.contract_key("DS00005", 1543858) == "DS00005:1543858"
-    assert keys.contract_key("OTHER", "1") is None and keys.contract_key("DS01004", "") is None
+def test_contract_key_is_number_only_so_datasets_dedupe():
+    assert keys.contract_key(1543858) == "C:1543858" == keys.contract_key(" 1543858 ")
+    assert keys.contract_key("") is None and keys.contract_key(None) is None
 
 
 def test_parse_date_source_formats():
@@ -31,9 +31,11 @@ def test_parse_date_source_formats():
     assert keys.parse_date("nonsense") is None
 
 
-def test_fiscal_year_and_gap():
+def test_fiscal_year_and_coverage_status():
     assert keys.fiscal_year(date(2016, 7, 1)) == 2017 and keys.fiscal_year(date(2016, 6, 30)) == 2016
-    assert [fy for fy in range(2015, 2022) if keys.in_contract_gap(fy)] == [2017, 2018, 2019]
+    assert [keys.coverage_status(fy) for fy in (2016, 2017, 2018, 2019, 2020)] == [
+        "prior_review_only", "partial_likely_incomplete", "partial", "partial", "full"]
+    assert keys.coverage_status(None) is None
 
 
 # --- supplier names ------------------------------------------------------------------------------------------------
@@ -146,3 +148,20 @@ def test_r3_id_conflict_needs_stricter_score():
     s = fuzzy_score("ALPHA ROAD BUILDERS NORTH", "ALPHA ROADS BUILDER NORTHS")
     if FUZZY_THRESHOLD <= s < FUZZY_THRESHOLD_ID_CONFLICT:
         assert m1[0]["supplier_key"] == m1[1]["supplier_key"] and m2[0]["supplier_key"] != m2[1]["supplier_key"]
+
+
+def test_non_latin_names_are_kept_not_treated_as_placeholders():
+    # Real-data regression: 68 Iraqi firms with Arabic-script names normalized to "" and became "placeholders".
+    assert normalize_name("شركة النقوش البغدادية") != ""
+    assert normalize_name("北京城建集团有限责任公司") != ""
+    assert normalize_name("Société d'Études") == "SOCIETE D ETUDES"     # accents still removed
+    m, _ = resolve(_recs(("شركة النقوش البغدادية", "IQ", None, ""), ("شركة النقوش البغدادية", "IQ", None, "")))
+    assert m[0]["supplier_key"] == m[1]["supplier_key"] and not m[0]["is_placeholder"]
+
+
+def test_masked_flag_only_for_placeholder_without_id():
+    m, merges = resolve(_recs(("INDIVIDUAL CONSULTANT", "MG", None, ""), ("INDIVIDUAL CONSULTANT", "MG", None, ""),
+                              ("INDIVIDUAL CONSULTANT", "MG", "40af7805b1f2f3c8", ""), ("Alpha Roads Ltd", "MG", None, "")))
+    assert [x["supplier_name_masked"] for x in m] == [True, True, False, False]
+    assert m[0]["supplier_key"] != m[1]["supplier_key"]        # never merged with each other
+    assert not any(i in (0, 1) or j in (0, 1) for i, j, _, _ in merges)

@@ -25,16 +25,20 @@ FUZZY_THRESHOLD = 0.92
 
 
 def _ascii(s):
-    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii")
+    """Accents removed AND non-Latin letters kept ("Société" -> "Societe", Arabic stays Arabic).
+    Real-data regression: an ASCII-only version erased 68 Iraqi firm names written in Arabic, turning real firms into
+    empty "placeholders"."""
+    decomposed = unicodedata.normalize("NFKD", s or "")
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
 def normalize_name(raw):
-    """'M/S. AIRES INGEGNERIA S.R.L.' -> 'AIRES INGEGNERIA'."""
+    """'M/S. AIRES INGEGNERIA S.R.L.' -> 'AIRES INGEGNERIA'. Letters of any script are kept."""
     s = _ascii(raw).upper()
     s = re.sub(r"\bM\s*/\s*S\b\.?", " M/S ", s)
     # Join dotted abbreviations first ("S.R.L." -> "SRL", "S.A." -> "SA") so legal forms are recognised.
     s = re.sub(r"\b((?:[A-Z]\.){2,})", lambda m: m.group(1).replace(".", ""), s)
-    s = re.sub(r"[^A-Z0-9/& ]", " ", s).replace("&", " AND ")
+    s = "".join(ch if (ch.isalnum() or ch in "/& ") else " " for ch in s).replace("&", " AND ")
     tokens = [t for t in s.split() if t]
     while tokens and tokens[0] in PREFIXES:
         tokens = tokens[1:]
@@ -194,6 +198,9 @@ def resolve(records):
             rule, score = rule_of.get(i, ("root", 1.0))
             mapping[i] = {"supplier_key": key, "norm_name": norm[i], "canonical_name": canon,
                           "kind": "individual" if indiv[i] else "firm", "is_placeholder": placeholder[i],
+                          # Placeholder name AND no supplier_id: identity unknowable. Never merged (no rule can
+                          # apply), and every supplier-history feature must be NULL for it, never 0.
+                          "supplier_name_masked": placeholder[i] and not sid[i],
                           "is_jv_name": bool(JV_PATTERN.search(_ascii(records[i].get("raw_name")).upper())),
                           "rule": rule, "score": score}
     return mapping, merges

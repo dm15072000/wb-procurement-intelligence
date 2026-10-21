@@ -59,7 +59,8 @@ UNION ALL
 SELECT concat('contract:', contract_key), 'Contract', description,
        to_json(named_struct('project_id', project_id, 'category', procurement_category, 'method', procurement_method,
                             'review_type', review_type, 'amount_usd', total_amount_usd, 'fiscal_year', fiscal_year,
-                            'reference', borrower_reference, 'source', source_dataset)),
+                            'reference', borrower_reference, 'source', source_dataset,
+                            'coverage_status', coverage_status)),
        signing_date, 'silver.contracts'
 FROM u_contracts
 UNION ALL

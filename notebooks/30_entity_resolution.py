@@ -69,12 +69,13 @@ emap = [{"raw_supplier_name": rec["raw_name"], "supplier_country_code": rec["_co
          "source_supplier_id": rec["supplier_id"], "procurement_method": rec["method"] or None,
          "supplier_key": m["supplier_key"], "norm_name": m["norm_name"], "canonical_name": m["canonical_name"],
          "resolved_country": rec["country"], "kind": m["kind"],
-         "is_placeholder": m["is_placeholder"], "is_jv_name": m["is_jv_name"], "rule": m["rule"], "score": float(m["score"])}
+         "is_placeholder": m["is_placeholder"], "supplier_name_masked": m["supplier_name_masked"],
+         "is_jv_name": m["is_jv_name"], "rule": m["rule"], "score": float(m["score"])}
         for rec, m in zip(records, mapping)]
 spark.createDataFrame(emap, "raw_supplier_name string, supplier_country_code string, supplier_country string, "
                       "source_supplier_id string, procurement_method string, supplier_key string, norm_name string, "
                       "canonical_name string, resolved_country string, kind string, is_placeholder boolean, "
-                      "is_jv_name boolean, rule string, score double") \
+                      "supplier_name_masked boolean, is_jv_name boolean, rule string, score double") \
      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{S}.entity_map")
 
 spark.sql(f"""CREATE OR REPLACE TABLE {S}.suppliers AS
@@ -83,6 +84,7 @@ spark.sql(f"""CREATE OR REPLACE TABLE {S}.suppliers AS
          first(resolved_country) AS country,
          first(kind) AS kind,
          max(is_placeholder) AS is_placeholder,
+         max(supplier_name_masked) AS supplier_name_masked,  -- history features must be NULL for these
          max(is_jv_name) AS is_jv_name,
          count(*) AS n_raw_records,
          count(DISTINCT raw_supplier_name) AS n_name_variants,
@@ -127,6 +129,36 @@ print(json.dumps(er_report, indent=2))
 print(f"\nR3 review sample ({len(sample)} of {len(r3)}):")
 for n, (i, j, _, s) in enumerate(sample, 1):
     print(f"{n:2d}. {s:.3f} | {records[i]['raw_name'][:45]:45s} | {records[j]['raw_name'][:45]:45s} | {records[i]['country']}")
+# Placeholder profile on the FULL data (requested): Stage 2's sample had every "INDIVIDUAL CONSULTANT" row carrying an
+# anonymised 16-hex supplier_id (2,094 rows, 1,924 distinct ids, 0 without id) and 0 masked records.
+ph_rows = spark.sql(f"""
+  SELECT a.raw_supplier_name, a.supplier_country, a.source_supplier_id, e.norm_name, e.supplier_name_masked
+  FROM {S}.contract_awards a JOIN {S}.entity_map e
+    ON  a.raw_supplier_name <=> e.raw_supplier_name AND a.supplier_country_code <=> e.supplier_country_code
+    AND a.supplier_country <=> e.supplier_country AND a.source_supplier_id <=> e.source_supplier_id
+    AND a.procurement_method <=> e.procurement_method
+  WHERE e.is_placeholder""").collect()
+ic = [r for r in ph_rows if r.norm_name.startswith("INDIVIDUAL")]
+placeholder_report = {
+    "placeholder_award_rows_by_name": dict(Counter(r.norm_name or "<empty>" for r in ph_rows).most_common()),
+    "individual_consultant": {
+        "award_rows": len(ic),
+        "countries_spanned": len({r.supplier_country for r in ic}),
+        "top10_countries": Counter(r.supplier_country for r in ic).most_common(10),
+        "with_supplier_id": sum(1 for r in ic if r.source_supplier_id),
+        "without_supplier_id": sum(1 for r in ic if not r.source_supplier_id),
+        "distinct_ids": len({r.source_supplier_id for r in ic if r.source_supplier_id}),
+    },
+    "masked_award_rows (placeholder AND no id)": sum(1 for r in ph_rows if r.supplier_name_masked),
+}
+# Other placeholder candidates the list might be missing: frequent short or generic normalized names.
+generic = spark.sql(f"""SELECT norm_name, count(*) AS n FROM {S}.entity_map
+                        WHERE NOT is_placeholder AND (length(norm_name) <= 3
+                           OR norm_name RLIKE '^(N ?A|NONE|NIL|TBD|TBC|UNKNOWN|VARIOUS|MULTIPLE|OTHERS?|CONSULTANTS?|INDIVIDUALS?|NOT APPLICABLE|NOT AVAILABLE|X+|-+)$')
+                        GROUP BY norm_name ORDER BY n DESC LIMIT 20""").collect()
+placeholder_report["possible_missed_placeholders_top20"] = [(r.norm_name, r.n) for r in generic]
+print(json.dumps(placeholder_report, indent=2, default=str))
+
 print("\nLargest clusters:")
 for k, n in keys_.most_common(5):
     print(n, sorted({records[i]['raw_name'] for i, m in enumerate(mapping) if m['supplier_key'] == k})[:6])
