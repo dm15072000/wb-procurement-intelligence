@@ -83,26 +83,32 @@ def tender_label(notices, plan_labels=()):
 
     notices: that tender's notices (dicts with notice_type, notice_date, notice_status, bid_description, notice_text).
     plan_labels: Procurement Plan activity labels with the same project + reference (is_cancelled, mentions_rebid).
-    Returns {"rebid": bool, "reasons": [...]}.
+    Returns {"rebid", "cancellation", "rebid_or_cancellation": bool, "reasons": [...]}.
+
+    Two outcomes, reported separately (2026-10-22): RE-BID = the tender was advertised again (second IFB, re-bid
+    wording, plan says re-bid); CANCELLATION = the notice or plan entry was cancelled. A cancellation is not always a
+    re-bid: in P144726, 5 of 10 cancelled plan entries were re-advertised later under a NEW reference and 5 were dropped.
+    The rates use the combined outcome, always named "re-bid or cancellation".
     """
-    reasons = []
+    rebid, cancel = [], []
     ifb_dates = sorted(n["notice_date"] for n in notices
                        if n.get("notice_type") == "Invitation for Bids" and n.get("notice_date")
                        and not is_modification(n))
     if len(ifb_dates) > 1 and (ifb_dates[-1] - ifb_dates[0]).days >= MIN_GAP_DAYS:
-        reasons.append(f"ifb_notices:{len(ifb_dates)}")
+        rebid.append(f"ifb_notices:{len(ifb_dates)}")
     if any((n.get("notice_status") or "").lower().startswith("cancel") for n in notices):
-        reasons.append("notice_cancelled")
+        cancel.append("notice_cancelled")
     for n in notices:
         hit = mentions_rebid(n.get("bid_description")) or mentions_rebid(n.get("notice_text"))
         if hit:
-            reasons.append(f"text:{hit.lower()}")
+            rebid.append(f"text:{hit.lower()}")
             break
-    for p in plan_labels:
-        if p.get("is_cancelled") or p.get("mentions_rebid"):
-            reasons.append("plan:" + ("cancelled" if p.get("is_cancelled") else "rebid"))
-            break
-    return {"rebid": bool(reasons), "reasons": reasons}
+    if any(p.get("mentions_rebid") for p in plan_labels):
+        rebid.append("plan:rebid")
+    if any(p.get("is_cancelled") for p in plan_labels):
+        cancel.append("plan:cancelled")
+    return {"rebid": bool(rebid), "cancellation": bool(cancel), "rebid_or_cancellation": bool(rebid or cancel),
+            "reasons": rebid + cancel}
 
 
 def beta_interval(a, b, level=0.9):
@@ -120,7 +126,7 @@ def beta_interval(a, b, level=0.9):
 
 
 class HierarchicalRates:
-    """Smoothed re-bid rates. Levels go from broad to specific; each group's rate is shrunk toward its parent's rate
+    """Smoothed "re-bid or cancellation" rates (any boolean label). Levels go from broad to specific; each group's rate is shrunk toward its parent's rate
     with prior strength `strength` (as if we had seen `strength` extra tenders at the parent's rate):
         rate = (positives + strength * parent_rate) / (n + strength)
     so a group of 3 tenders barely moves away from its parent, while a group of 300 speaks for itself."""
@@ -128,7 +134,7 @@ class HierarchicalRates:
     DEFAULT_LEVELS = ((), ("procurement_category",), ("procurement_category", "procurement_method"),
                       ("country_iso3", "procurement_category", "procurement_method"))
 
-    def __init__(self, levels=DEFAULT_LEVELS, strength=20.0, label="rebid"):
+    def __init__(self, levels=DEFAULT_LEVELS, strength=20.0, label="rebid_or_cancellation"):
         self.levels, self.strength, self.label = levels, strength, label
         self.table = {}
 
@@ -166,9 +172,9 @@ class HierarchicalRates:
 
 
 def rate_to_text(res):
-    """'3 of 41 similar tenders were re-bid (smoothed rate 6%, 90% interval 2–15%; group: category+method)'."""
+    """'3 of 41 similar tenders were re-bid or cancelled (smoothed rate 6%, 90% interval 2–15%; ...)'."""
     if not res:
         return "no comparable tenders"
     lo, hi = res["ci90"]
-    return (f"{res['positives']} of {res['n']} similar tenders were re-bid (smoothed rate {res['rate']:.0%}, 90% "
+    return (f"{res['positives']} of {res['n']} similar tenders were re-bid or cancelled (smoothed rate {res['rate']:.0%}, 90% "
             f"interval {lo:.0%}–{hi:.0%}; compared within: {res['level']})")

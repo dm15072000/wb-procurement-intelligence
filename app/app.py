@@ -1,7 +1,7 @@
 """Procurement Intelligence: Databricks App (Streamlit). Design: docs/03_model_rag_design.md §8.
 
 Plain-language summary: four screens.
-  1. Plan a package (L1, L2): similar past contracts, a predicted duration range, the re-bid history of similar
+  1. Plan a package (L1, L2): similar past contracts, a predicted duration range, the re-bid or cancellation history of similar
      tenders, an amendment indicator, and a cited brief of risks and lessons from past project documents.
   2. Monitor a project (L3): rating timeline with ISR/ICR/IEG conflicts, early-warning flags, disbursement, contracts.
   3. Ask the evidence (L4): a free question answered only from cited passages.
@@ -200,7 +200,7 @@ def plan_screen():
     else:
         m1.info("Duration model not available.")
     if reb:
-        m2.metric("Re-bid rate of similar tenders", f"{100 * reb['rate']:.0f}%", help=reb["text"])
+        m2.metric("Re-bid or cancellation rate of similar tenders", f"{100 * reb['rate']:.0f}%", help=reb["text"])
         m2.caption(reb["text"])
     b, _ = backend()
     iso3, proj_ctx, _, gov, _ = b._context(pkg)

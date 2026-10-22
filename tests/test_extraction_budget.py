@@ -77,3 +77,47 @@ def test_combined_prompt_and_validation_of_both_kinds():
 
 def test_batches():
     assert [len(b) for b in lx.batches(list(range(250)), 100)] == [100, 100, 50]
+
+
+# Notebook 55 must extract only events that HAPPENED (2026-10-22). Real phrasings from notebook 51's full run.
+NAME = ("Le Gouvernement du Cameroun a obtenu un credit en vue du financement du Projet de Relance et de "
+        "Developpement de la Region du Lac Tchad (PROLAC).")
+CONDITION = "Conditions: Not awarded Lots within the REP will be subject to re-bidding."
+HAPPENED = "Package 3 was re-bid in 2019 because all bids exceeded the estimate."
+
+
+def _event_reply(quote, event_type="rebid"):
+    return json.dumps({"lessons": [], "events": [{"event_type": event_type, "contract_reference": None,
+                                                  "description": "x", "quote": quote}]})
+
+
+def test_prompt_tells_the_llm_to_skip_conditions_plans_and_project_names():
+    p = lx.combined_prompt(_c("p", ISR, text=NAME))
+    assert "ACTUALLY HAPPENED" in p and "subject to re-bidding" in p and "Projet de Relance" in p
+
+
+def test_project_name_relance_is_not_a_rebid_event():
+    c = _c("n", ISR, text=NAME)
+    kept, rej = lx.validate(_event_reply("financement du Projet de Relance et de Developpement de la Region du Lac "
+                                         "Tchad"), c, "events")
+    assert kept == [] and rej["not_happened"] == 1
+
+
+def test_conditional_rebidding_is_not_an_event():
+    c = _c("c", ISR, text=CONDITION)
+    kept, rej = lx.validate(_event_reply("Not awarded Lots within the REP will be subject to re-bidding."), c, "events")
+    assert kept == [] and rej["not_happened"] == 1
+
+
+def test_an_event_that_happened_is_kept():
+    c = _c("h", ICR, text=HAPPENED + " " + NAME)
+    kept, rej = lx.validate(_event_reply("Package 3 was re-bid in 2019"), c, "events")
+    assert len(kept) == 1 and rej["not_happened"] == 0
+
+
+def test_event_happened_guard_in_english_and_french():
+    assert lx.event_happened("The contract was terminated in March 2021.", "termination")
+    assert lx.event_happened("L'appel d'offres a ete relance apres un premier appel infructueux.", "rebid")
+    assert not lx.event_happened("The contract may be terminated if progress does not improve.", "termination")
+    assert not lx.event_happened("Le marche sera relance en 2024.", "rebid")
+    assert not lx.event_happened("Works are expected to be delayed by the rains.", "procurement_delay")

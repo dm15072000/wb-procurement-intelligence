@@ -2,7 +2,7 @@
 
 Plain-language summary: src/rag/pipeline.py only knows "a function that searches", "a function that runs SQL", and
 so on. This file supplies the real ones on Databricks: SQL over Unity Catalog tables, the Foundation Model endpoints
-for embeddings and chat, Vector Search (or the cosine fallback), the registered duration model and the re-bid rates.
+for embeddings and chat, Vector Search (or the cosine fallback), the registered duration model and the re-bid or cancellation rates.
 The SQL runner is passed in, so the same code works with spark.sql in a notebook and with the SQL connector in the
 app. Values that end up inside SQL text (project IDs, contract keys) are validated against strict patterns first.
 """
@@ -169,7 +169,7 @@ class DatabricksBackend:
         return iso3, project, (lending[0]["lending_type"] if lending else None), du.governance_lookup(gov), earlier
 
     def predictions(self, pkg):
-        """Model facts: duration P20/P50/P80 and the re-bid rate. Numbers come from models, never from the LLM."""
+        """Model facts: duration P20/P50/P80 and the re-bid or cancellation rate. Numbers come from models, never from the LLM."""
         facts = []
         as_of = du.as_date(pkg.get("as_of") or date.today())
         if self.duration_model is not None and pkg.get("category"):
@@ -200,7 +200,8 @@ class DatabricksBackend:
         if rates:
             r = rates[0]
             facts.append({"kind": "rebid_rate", "rate": r["rate"],
-                          "text": (f"Re-bid history: {r['positives']} of {r['n']} similar tenders were re-bid "
+                          "text": (f"Re-bid or cancellation history: {r['positives']} of {r['n']} similar tenders were "
+                                   f"re-bid or cancelled "
                                    f"(smoothed rate {100 * r['rate']:.0f}%, 90% interval {100 * r['ci_low']:.0f}% to "
                                    f"{100 * r['ci_high']:.0f}%; compared within {r['level']}).")})
         return facts

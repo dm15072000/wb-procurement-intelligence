@@ -16,7 +16,7 @@ disbursements, notices), **how it was executed** (ISRs, procurement plans, notic
 
 | Stage (§2) | What the user gets | Evidence behind it |
 |---|---|---|
-| Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid rate of similar tenders, similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
+| Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid or cancellation rate of similar tenders, similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
 | Tender design & packaging | past scopes and qualification criteria from indexed REOI / IFB notices; lessons on packaging, specifications and market capacity | procurement-notice text, PAD procurement sections, ICR lessons (public SBDs/ToRs are scarce, stated) |
 | Execution & monitoring | early-warning flags with reasons: overdue tenders, disbursement lag, weak ISR ratings, reported problems | duration model, disbursement snapshots, extracted ratings and events |
 | Continuous learning | new ISRs/ICRs become searchable, rated and mined for lessons each week; models retrain under a promotion rule | one Databricks Job, incremental at every step |
@@ -155,7 +155,7 @@ real workload.
   amendments, deadline extensions and "Revised" notices do **not** count: they modify a tender, they don't re-run it),
   a cancelled notice, re-bid wording in notice text (English and French), or a Procurement Plan saying so.
 - **Rare-event method:** hierarchical Beta-binomial rates (all → category → category×method → country×category×method),
-  each shrunk toward its parent, reported with count and 90% interval ("3 of 41 similar tenders were re-bid…"). A
+  each shrunk toward its parent, reported with count and 90% interval ("3 of 41 similar tenders were re-bid or cancelled…"). A
   classifier is trained only with ≥ 50 positives and kept only if it beats the rates on Brier score. **[PEND]** notebook 51.
 
 ### 4.3 Amendment risk
@@ -172,7 +172,7 @@ A **fixed tool sequence**, which is easier to test, explain and audit than an op
 
 1. SQL: similar past contracts (category, method, value band, same country first, signed before the as-of date), each
    carrying dataset and coverage status;
-2. models: duration range and re-bid rate (numbers never come from the LLM);
+2. models: duration range and re-bid or cancellation rate (numbers never come from the LLM);
 3. graph: related projects and their documents; project IDs named in a question scope the search;
 4. **hybrid** search (vector + keyword: Vector Search HYBRID mode, or BM25 + whole-code identifier matching as a
    fallback, so references like "GYTJ201B" and project IDs are found exactly): A (those projects), B (ICR / IEG lessons
@@ -228,7 +228,7 @@ follow the document timeline (PAD → ISRs → ICR → IEG, verified in 50 of 51
 One weekly Databricks Job (`jobs/refresh_job.json`):
 ingest → silver → documents (new only, parse once) → suppliers → graph → extraction (new chunks only) → embeddings
 (new or changed only) → Delta Sync index → model retrain with **champion/challenger** (promote only if P50 MAE is no
-worse and P80 coverage is 0.70–0.90 on the latest time slice; the decision is logged in MLflow) → re-bid rates → early
+worse and P80 coverage is 0.70–0.90 on the latest time slice; the decision is logged in MLflow) → re-bid or cancellation rates → early
 warnings → **RAG regression evaluation** (the job fails if recall@5 drops more than 5 points).
 
 - A new ICR becomes searchable, rated and mined for lessons and events on the next run; its rating conflicts are

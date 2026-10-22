@@ -197,7 +197,7 @@ def test_extraction_keeps_only_verbatim_quotes_and_known_types():
            '{"event_type": "fraud", "description": "z", "quote": "The contract for Package 2 was amended twice"}]}')
     kept, rej = lx.validate(raw, CHUNK, "events")
     assert len(kept) == 1 and kept[0]["chunk_id"] == "k1"
-    assert rej == {"unparseable": 0, "bad_type": 1, "quote_not_found": 1}
+    assert rej == {"unparseable": 0, "bad_type": 1, "quote_not_found": 1, "not_happened": 0}
     assert lx.validate("nonsense", CHUNK, "events")[1]["unparseable"] == 1
 
 

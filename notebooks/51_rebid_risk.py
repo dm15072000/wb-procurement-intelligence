@@ -4,10 +4,13 @@
 # environment_version = "6"
 # ///
 # MAGIC %md
-# MAGIC # 51 — Re-bid / re-tender risk (Stage 5, M2.1)
+# MAGIC # 51 — Re-bid or cancellation risk (Stage 5, M2.1)
 # MAGIC
-# MAGIC **What this notebook does:** labels every universe tender as re-bid or not from the public record, then
-# MAGIC estimates "how often were similar tenders re-bid?". Design: `docs/03_model_rag_design.md` §2a.
+# MAGIC **What this notebook does:** labels every universe tender from the public record with two outcomes, **re-bid**
+# MAGIC (advertised again) and **cancellation** (notice or plan entry cancelled), reported separately, then estimates "how
+# MAGIC often were similar tenders re-bid or cancelled?" on the combined outcome, always named **"re-bid or
+# MAGIC cancellation"**. A cancellation is not always a re-bid (P144726: 5 of 10 cancelled entries were re-advertised under
+# MAGIC a new reference, 5 dropped). Design: `docs/03_model_rag_design.md` §2a.
 # MAGIC
 # MAGIC **Why rates first, not a classifier:** H2 found re-bid signals are rare (9 of 3,643 IFB references had a second
 # MAGIC IFB). With few positives a classifier learns noise. So the default is a smoothed rate per group with its count
@@ -75,14 +78,21 @@ for tk, ns in notices.items():
                     "notice_method_code": first["procurement_method_code"],
                     "contract_category": c["procurement_category"] if c else None,
                     "contract_method": c["procurement_method"] if c else None,
-                    "rebid": lab["rebid"], "reasons": lab["reasons"]})
+                    "rebid": lab["rebid"], "cancellation": lab["cancellation"],
+                    "rebid_or_cancellation": lab["rebid_or_cancellation"], "reasons": lab["reasons"]})
 report["tenders"] = len(tenders)
 # Checkpoint d change 6: corrigendum / amendment / extension / revised IFB notices modify an invitation, they are not a
 # second round of bidding, so they never count toward "more than one IFB". How many were set aside:
 all_ifbs = [n for ns in notices.values() for n in ns if n["notice_type"] == "Invitation for Bids"]
 report["ifb_notices_excluded_as_modifications"] = sum(lb.is_modification(n) for n in all_ifbs)
 report["ifb_notices"] = len(all_ifbs)
-report["positives"] = sum(t["rebid"] for t in tenders)
+# Two outcomes reported separately; the rates and the classifier use the combined one, "re-bid or cancellation".
+OUTCOME = "rebid_or_cancellation"
+report["positives"] = sum(t[OUTCOME] for t in tenders)
+report["positives_by_outcome"] = {"rebid": sum(t["rebid"] for t in tenders),
+                                  "cancellation": sum(t["cancellation"] for t in tenders),
+                                  "both": sum(t["rebid"] and t["cancellation"] for t in tenders),
+                                  "rebid_or_cancellation": report["positives"]}
 report["reasons"] = dict(Counter(r.split(":")[0] for t in tenders for r in t["reasons"]))
 print(json.dumps(report, indent=2))
 
@@ -126,10 +136,10 @@ spark.createDataFrame(pd.DataFrame([dict(t, reasons="; ".join(t["reasons"])) for
 
 train, test, cutoff = du.time_split(tenders, "start_date")
 rates = lb.HierarchicalRates().fit(train)
-glob = sum(t["rebid"] for t in train) / max(1, len(train))
-brier = lambda ps: sum((p - t["rebid"]) ** 2 for p, t in zip(ps, test)) / max(1, len(test))
+glob = sum(t[OUTCOME] for t in train) / max(1, len(train))
+brier = lambda ps: sum((p - t[OUTCOME]) ** 2 for p, t in zip(ps, test)) / max(1, len(test))
 report["rates_check"] = {"test_from": str(cutoff), "n_train": len(train), "n_test": len(test),
-                         "test_positives": sum(t["rebid"] for t in test),
+                         "outcome": "re-bid or cancellation", "test_positives": sum(t[OUTCOME] for t in test),
                          "brier_hierarchical": brier([rates.predict_one(t)["rate"] for t in test]),
                          "brier_global_rate": brier([glob] * len(test))}
 
@@ -164,10 +174,10 @@ if report["positives"] >= MIN_POSITIVES_FOR_CLASSIFIER and report["rates_check"]
                                                                     encoded_missing_value=-1), cats)])),
                     ("gbt", HistGradientBoostingClassifier(max_depth=3, learning_rate=0.05, max_iter=200,
                                                            categorical_features=[0, 1, 2], random_state=42))])
-    clf.fit(tr[cats], tr.rebid)
+    clf.fit(tr[cats], tr[OUTCOME])
     p = clf.predict_proba(te[cats])[:, 1]
-    report["classifier"] = {"auc": float(roc_auc_score(te.rebid, p)), "brier": float(brier_score_loss(te.rebid, p)),
-                            "kept": float(brier_score_loss(te.rebid, p)) < report["rates_check"]["brier_hierarchical"]}
+    report["classifier"] = {"auc": float(roc_auc_score(te[OUTCOME], p)), "brier": float(brier_score_loss(te[OUTCOME], p)),
+                            "kept": float(brier_score_loss(te[OUTCOME], p)) < report["rates_check"]["brier_hierarchical"]}
 else:
     report["classifier"] = {"trained": False, "reason": f"{report['positives']} positives < {MIN_POSITIVES_FOR_CLASSIFIER} "
                                                         "or none in the test period: rates only"}
@@ -183,7 +193,7 @@ print(json.dumps(report["classifier"], indent=2))
 
 import random
 random.seed(7)
-pos = [t for t in tenders if t["rebid"]]
+pos = [t for t in tenders if t[OUTCOME]]
 for t in random.sample(pos, min(20, len(pos))):
     ns = notices[t["tender_key"]]
     print(t["tender_key"], t["start_date"], t["reasons"], "|", (ns[0].get("bid_description") or "")[:100])

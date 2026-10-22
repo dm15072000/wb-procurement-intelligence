@@ -97,7 +97,7 @@ def _n(t, d, status="Published", desc="", text=""):
 
 
 def test_rebid_label_reasons():
-    assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1))]) == {"rebid": False, "reasons": []}
+    assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1))]) ==         {"rebid": False, "cancellation": False, "rebid_or_cancellation": False, "reasons": []}
     two = labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1)), _n("Invitation for Bids", date(2020, 4, 1))])
     assert two["rebid"] and two["reasons"] == ["ifb_notices:2"]
     # a same-week correction is not a re-bid
@@ -106,7 +106,13 @@ def test_rebid_label_reasons():
     assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1), status="Cancelled")])["reasons"] == ["notice_cancelled"]
     assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1), desc="Re-tender of Package 3")])["rebid"]
     assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1), text="Avis de relance de l'appel")])["rebid"]
-    assert labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1))], [{"is_cancelled": True}])["reasons"] == ["plan:cancelled"]
+    cancelled = labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1))], [{"is_cancelled": True}])
+    assert cancelled["reasons"] == ["plan:cancelled"]
+    # a cancellation is reported separately: it is NOT a re-bid, only part of "re-bid or cancellation"
+    assert (cancelled["rebid"], cancelled["cancellation"], cancelled["rebid_or_cancellation"]) == (False, True, True)
+    both = labels.tender_label([_n("Invitation for Bids", date(2020, 1, 1), desc="Re-tender of Package 3")],
+                               [{"is_cancelled": True, "mentions_rebid": False}])
+    assert both["rebid"] and both["cancellation"] and both["reasons"] == ["text:re-tender", "plan:cancelled"]
 
 
 def test_rebid_patterns_avoid_common_false_hits():
@@ -119,7 +125,7 @@ def test_hierarchical_rates_shrink_small_groups_toward_parent():
              for i in range(100)]
             + [{"procurement_category": "Works", "procurement_method": "RFB", "country_iso3": "MLI", "rebid": True}
                for _ in range(2)])
-    m = labels.HierarchicalRates().fit(rows)
+    m = labels.HierarchicalRates(label="rebid").fit(rows)
     mli = m.predict_one({"procurement_category": "Works", "procurement_method": "RFB", "country_iso3": "MLI"})
     ind = m.predict_one({"procurement_category": "Works", "procurement_method": "RFB", "country_iso3": "IND"})
     assert mli["n"] == 2 and mli["positives"] == 2

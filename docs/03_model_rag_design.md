@@ -22,6 +22,8 @@ are written but **not run** yet.
 | 5 | **Synthetic questions paraphrase** and avoid the chunk's key phrases | The prompt forbids reusing key phrases, place / firm names and reference numbers; word overlap with the gold passage is **measured** per question; if > 0.5 the question is regenerated once and the less-overlapping one kept; overlap is stored and reported | §3c; `src/evaluation/questions.py` |
 | 6 | **Re-bid label:** exclude corrigendum / amendment / extension notices from the "more than one IFB" rule | `is_modification`: status "Revised", or a notice-modification phrase (corrigendum, addendum, amendment no. / to the IFB, deadline or bid-submission extension, revised notice, erratum; French *additif, rectificatif, prorogation, report de date*) in the description or title area. Works wording ("extension of the road") does not count. The excluded count and a sample are printed for review | §2a; `src/risk/labels.py`; notebook 51 |
 | 6b | **Re-bid wording guard** (2026-10-22, after the first full run) | The first run labelled 171 tenders as re-bids, but 120 were false: P161706 is the "Projet de **Relance** et de Développement de la Région du Lac Tchad" (relance = recovery; 86 of 88 tenders) and P160223 (Lebanon) prints "Not awarded Lots … **will be subject to re-bidding**" in every invitation (34 of 43). Now a match is skipped when it is part of a project / programme name or follows a future / conditional phrase (will / may / shall be, subject to, if, in case), and bare "relance" counts only next to a procurement word (avis, appel d'offres, lot, n°). Re-checked on the real notices: 29 of the 149 text positives remain, all genuine ("Rebidding", "RETENDER", "Second Call", "(Relance)", "re-tendering of Lot-1 and Lot-3"). The classifier's AUC 0.93 was an artefact: with only category, method and country as inputs, it learned which projects carried the boilerplate | `src/risk/labels.py::mentions_rebid`; notebook 51 |
+| 6c | **Two outcomes** (2026-10-22): *re-bid* and *cancellation* reported separately; the combined rate is always named "re-bid or cancellation" | P144726: 5 of 10 cancelled plan entries were re-advertised under a new reference, 5 were dropped, so a cancellation is not a re-bid. Recall gap found: re-advertisement under a NEW reference (378 tenders, mostly P157054) is not captured; a "same package re-advertised" rule is proposed | `src/risk/labels.py::tender_label`; docs/07 §2 |
+| 6d | **Notebook 55 events must have happened** | Prompt excludes conditions, plans and project names; `event_happened` rejects future / conditional quotes and project-name-only re-bid words (`not_happened`) | `src/extraction/llm_extract.py`; tests |
 | 7 | **Check the Free Edition Apps limit** | Databricks docs (*Free Edition limitations*, checked 2026-10-21): **up to 3 apps per account**; apps **stop 24 h** after start / redeploy. One known app exists (`wbintelligence2`), so no deletion should be needed. Notebook 80 lists the apps read-only and says whether a slot is free | §8; notebook 80 |
 
 ---
@@ -156,7 +158,7 @@ When a user starts a package (country, optional project, category, method, estim
 | Step | Tool | What it returns | Why |
 |---|---|---|---|
 | 1 | **SQL: similar contracts** | Up to 10 past contracts in road projects, same category (and method if given), value within 0.3–3×, signed before the as-of date, nearest value first; same country ranked first. Each carries `coverage_status`. | Precedents are structured facts, not text. |
-| 2 | **Models** | Duration P20/P50/P80 and re-bid rate with its count | Schedule and risk numbers come from models, never from the LLM. |
+| 2 | **Models** | Duration P20/P50/P80 and re-bid or cancellation rate with its count | Schedule and risk numbers come from models, never from the LLM. |
 | 3 | **Graph** | Projects of those contracts + the user's project → their documents; DESCRIBES links for those contracts | Narrows retrieval to relevant projects. |
 | 4 | **Vector search A: project-scoped** | top 12 chunks of those projects, `doc_date ≤ as-of`, primary only | Specific precedents. |
 | 5 | **Vector search B: lessons-scoped** | top 12 chunks from ICR / ICR Review / PPAR across all slice projects, sections whose path mentions lessons, findings or procurement | Sector-wide lessons. |
@@ -270,7 +272,7 @@ Descriptive only (n = 16).
                                                            ├─▶ 55 extract ratings / lessons / events (new chunks only)
                                                            ├─▶ 60 embed new chunks ─▶ index sync (Delta Sync)
                                                            ├─▶ 50 retrain duration model ─▶ champion/challenger
-                                                           ├─▶ 51 re-bid rates
+                                                           ├─▶ 51 re-bid or cancellation rates
                                                            └─▶ 70 early warnings ─▶ 61 RAG regression eval
 ```
 
@@ -292,7 +294,7 @@ started or redeployed (restart it before the demo). Notebook 80 checks the count
 Three screens, all reading Unity Catalog tables through a SQL warehouse and calling the pay-per-token Foundation Model
 endpoints (no new serving endpoint):
 
-1. **Plan a package (L1, L2):** inputs → similar contracts with coverage status, duration P20/P50/P80, re-bid rate, the
+1. **Plan a package (L1, L2):** inputs → similar contracts with coverage status, duration P20/P50/P80, re-bid or cancellation rate, the
    cited RAG brief (risks, mitigations, lessons), sources panel, feedback buttons.
 2. **Monitor a project (L3):** rating timeline with conflict flags, disbursement vs time, early-warning flags with
    evidence, overdue tenders.
