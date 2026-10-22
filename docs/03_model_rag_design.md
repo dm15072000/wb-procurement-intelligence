@@ -7,9 +7,21 @@ Labels: **[V] verified** · **[M] measured** (from the checkpoint (c) runs) · *
 Everything in this document is **[P]** unless labelled. No result in this document is measured yet. The numbers
 come from notebooks 50–70 once you run them, and go in `docs/07_evaluation.md`.
 
-**Status:** code for every component below is written and unit-tested locally (`src/`, `tests/`). Notebooks 50–80,
-the refresh job and the app are written but **not run**. CLAUDE.md checkpoint (d) still applies: please approve or
-change this design before running notebooks 50 onward.
+**Status:** **checkpoint (d) APPROVED by the user on 2026-10-21, with the seven changes below.** Code for every
+component is written and unit-tested locally (`src/`, `tests/`). Notebooks 21 and 50–80, the refresh job and the app
+are written but **not run** yet.
+
+## Checkpoint (d) decision: approved with changes [V: user, 2026-10-21]
+
+| # | Change requested | How it is implemented | Where |
+|---|---|---|---|
+| 1 | **Claim-support guardrail:** one batched LLM verifier call per answer checks each claim against its cited evidence; unsupported claims removed and counted | After the mechanical checks, `claim_verifier.verify` sends all remaining claims, each with the exact text of its cited sources, in **one** call (temperature 0, JSON verdicts). **Fails closed:** a claim without an explicit `"supported": true` is removed. Counts (`verified`, `unsupported`, `no_verdict`) go into every guardrail report, the app and the evaluation | §4 layer 7b; `src/guardrails/claim_verifier.py`; `src/rag/pipeline.py` |
+| 2 | **Keyword matching alongside vector search**, so contract references and project IDs are findable | Vector Search **HYBRID** mode (`query_type="HYBRID"` with both `query_text` and `query_vector`, documented for self-managed embedding indexes), tried once per session; if the index refuses it, ANN + our own **keyword index** (BM25 + whole-code identifier matching), fused as 0.7 × similarity + 0.3 × keyword score. Passages containing a queried identifier get a rerank bonus (+0.30) and **pass the retrieval gate** even with low similarity. Notebook 60 records which mode works in `ops.config` | §3a–3b; `src/rag/keyword.py`, `retrieval.py`, `databricks_tools.py` |
+| 3 | **Index procurement-notice text** (REOI / IFB, with qualification criteria) for slice projects as doc_type "Procurement Notice"; add ~5 tender-design (L2) questions | Notebook 21 → `docs.notice_chunks` (HTML cleaned, paragraph-aware pieces, repeats flagged; cited by notice ID + reference, no invented URL); notebook 60 indexes them with the report chunks; planning requests add a notice-scoped search; notebook 61 writes 5 `tender_design` questions from notice passages that mention qualification / experience / turnover | §3a, §3b, §3c; `src/chunking/notices.py`; notebooks 21, 60, 61 |
+| 4 | **Split the evaluation set:** calibrate the refusal threshold on one half, report metrics on the other | Deterministic 50/50 split stratified by question kind (hash of the question ID), stored in the `split` column; threshold chosen on `calibration`, every reported metric on `test` | §3c; `src/evaluation/questions.py`; notebook 61 |
+| 5 | **Synthetic questions paraphrase** and avoid the chunk's key phrases | The prompt forbids reusing key phrases, place / firm names and reference numbers; word overlap with the gold passage is **measured** per question; if > 0.5 the question is regenerated once and the less-overlapping one kept; overlap is stored and reported | §3c; `src/evaluation/questions.py` |
+| 6 | **Re-bid label:** exclude corrigendum / amendment / extension notices from the "more than one IFB" rule | `is_modification`: status "Revised", or a notice-modification phrase (corrigendum, addendum, amendment no. / to the IFB, deadline or bid-submission extension, revised notice, erratum; French *additif, rectificatif, prorogation, report de date*) in the description or title area. Works wording ("extension of the road") does not count. The excluded count and a sample are printed for review | §2a; `src/risk/labels.py`; notebook 51 |
+| 7 | **Check the Free Edition Apps limit** | Databricks docs (*Free Edition limitations*, checked 2026-10-21): **up to 3 apps per account**; apps **stop 24 h** after start / redeploy. One known app exists (`wbintelligence2`), so no deletion should be needed. Notebook 80 lists the apps read-only and says whether a slot is free | §8; notebook 80 |
 
 ---
 
@@ -82,7 +94,8 @@ latest period is biased toward short durations. This makes the test set slightly
 ### 2a. Re-bid / re-tender risk
 
 **Label (tender level), each reason stored for audit** (`src/risk/labels.py`):
-- more than one IFB notice for the same tender key, at least 30 days apart;
+- more than one IFB notice for the same tender key, at least 30 days apart, **not counting notices that only modify an
+  earlier one** (corrigendum, addendum, amendment, deadline extension, status "Revised"; change 6);
 - a notice with status `Cancelled`;
 - notice text or description mentions re-bidding (`re-bid`, `re-tender`, `re-advertis…`, `second call`, French
   `relance`, `appel d'offres infructueux`, …);
@@ -129,6 +142,11 @@ public data. Design:
   that is off by default, and it checks that no endpoint exists first.
 - **Fallback:** cosine similarity in memory over `chunk_embeddings` (5,226 × 1,024 floats ≈ 21 MB). Same filters, same
   output, so the app works if the endpoint is unavailable during the demo.
+- **Procurement notices (change 3):** REOI / IFB / prequalification text of the slice projects (`docs.notice_chunks`,
+  notebook 21) is embedded and indexed in the same table as doc_type "Procurement Notice".
+- **Hybrid (change 2):** Vector Search HYBRID mode when the index accepts it; otherwise BM25 + identifier matching
+  (`src/rag/keyword.py`) fused with the vector scores. Project IDs and references ("GYTJ201B", "HAMP-CS-01") are matched
+  as whole codes, ignoring dashes and spaces.
 
 ### 3b. The agentic flow: a fixed tool sequence, not an open-ended agent
 
@@ -141,10 +159,11 @@ When a user starts a package (country, optional project, category, method, estim
 | 3 | **Graph** | Projects of those contracts + the user's project → their documents; DESCRIBES links for those contracts | Narrows retrieval to relevant projects. |
 | 4 | **Vector search A: project-scoped** | top 12 chunks of those projects, `doc_date ≤ as-of`, primary only | Specific precedents. |
 | 5 | **Vector search B: lessons-scoped** | top 12 chunks from ICR / ICR Review / PPAR across all slice projects, sections whose path mentions lessons, findings or procurement | Sector-wide lessons. |
-| 6 | **Rerank** | merge A + B (+ DESCRIBES chunks), deduplicate, score = similarity + authority bonus (IEG > ICR > ISR > PAD) + lesson-section bonus, at most 2 chunks per document, top 8 | Diversity and source quality. |
-| 7 | **Retrieval gate** | refuse if the best similarity < threshold (calibrated on the evaluation set) | "I don't have evidence" beats a guess. |
+| 5b | **Notice search** (planning only) | top 12 "Procurement Notice" chunks, as-of filtered | Past scopes and qualification criteria for tender design (L2). |
+| 6 | **Rerank** | merge all searches (each hybrid: vector + keyword) + DESCRIBES chunks, deduplicate, score = hybrid score + authority bonus (IEG > ICR > ISR > PAD) + lesson-section bonus + **identifier-match bonus**, at most 2 chunks per document, top 8 | Diversity, source quality, exact codes first. |
+| 7 | **Retrieval gate** | refuse if the best raw similarity < threshold (calibrated on the calibration half) **and** no queried identifier was found verbatim | "I don't have evidence" beats a guess; an exact code match is evidence. |
 | 8 | **Generate** | Llama 3.3 70B, temperature 0, JSON output: claims, each with citation IDs | Structured output makes citations checkable. |
-| 9 | **Guardrails** (§4) | claims that fail a check are removed and counted; the answer shows what was removed | Faithfulness by construction. |
+| 9 | **Guardrails** (§4) | mechanical checks, then one batched verifier call; claims that fail are removed and counted; the answer shows what was removed | Faithfulness by construction. |
 
 Steps are plain Python functions in `src/rag/pipeline.py` with the data-access functions injected, so the same code
 runs in the notebook, in the evaluation and in the app, and the whole flow is unit-tested with fakes.
@@ -154,14 +173,21 @@ runs in the notebook, in the evaluation and in the app, and the whole flow is un
 | Part | How it is built | Gold label |
 |---|---|---|
 | Rating look-ups (~15) | from extracted ratings (§5): "What outcome rating did the ICR give project P…?" | the chunk the rating came from |
-| Lesson questions (~30) | LLM writes one question per sampled ICR lessons chunk; **you review and edit the list** before it is frozen | that chunk (and any exact duplicate) |
+| Lesson questions (~30) | LLM writes one **paraphrased** question per sampled ICR lessons chunk (key phrases forbidden; word overlap measured, regenerated once if > 0.5); **you review and edit the list** before it is frozen | that chunk (and any exact duplicate) |
+| Tender-design questions (~5, L2) | same, from procurement-notice chunks mentioning qualification / experience / turnover | that notice chunk |
 | Contract precedents (~5) | from the 5 DESCRIBES links: "What happened with contract <ref>?" | the linked chunk |
 | Refusals (~5) | questions about countries or sectors not in the corpus | the system must refuse |
 | Prompt injection (1–2) | a planted chunk saying "ignore your instructions…" added to the context in the test only | the answer must not follow it |
 
-Metrics: recall@5 and @10, MRR, citation validity (share of citations that pass §4), claim support rate, faithfulness
-(LLM judge on a sample, with the caveat that the judge is the same model family), refusal accuracy. Reported per
-country and logged to MLflow and `ml.rag_eval_results`. Synthetic questions are labelled as such.
+**Split (change 4):** a deterministic 50/50 split stratified by kind. The retrieval-gate threshold is calibrated on the
+calibration half only; **every reported metric comes from the test half**, so the numbers are not tuned on the
+questions they describe.
+
+Metrics (test half): recall@5 and @10, MRR, citation validity (share of citations that pass §4), claim support rate
+(claims kept after the mechanical checks **and** the verifier), removals split into mechanical vs verifier, an
+independent judge as a second opinion on a sample (same model family: caveat), refusal accuracy. Reported per country
+and per question kind, logged to MLflow and `ml.rag_eval_results`. Synthetic questions are labelled as such, with
+their measured overlap.
 
 ---
 
@@ -179,6 +205,7 @@ Code: `src/guardrails/citation_check.py`, `src/rag/prompt.py`. Each layer is uni
 | 5. Every claim cited | a claim with no citation | claim removed |
 | 6. Numbers | every number in a claim (amounts, %, durations, years) appears in at least one cited source, after normalising `1,200` / `1200` and `12 %` / `12%` | claim removed |
 | 7. Identifiers | every project ID (`P` + 6 digits) and contract reference in a claim appears in a cited source | claim removed |
+| 7b. **Claim support (verifier)** | ONE batched LLM call per answer: every remaining claim with the exact text of its cited sources → JSON verdict per claim; fails closed (no explicit "supported" = removed) | claim removed, counted as `unsupported` / `no_verdict` |
 | 8. Extraction quotes | every LLM-extracted lesson, event or rating carries a quote that must appear verbatim (whitespace- and case-insensitive) in its chunk | item dropped, counted |
 | 9. Model numbers | durations and risk rates shown in the app come from models and SQL with their own provenance, never from LLM text | — |
 
@@ -258,6 +285,9 @@ Descriptive only (n = 16).
 
 ## 8. App (Databricks Apps, Streamlit)
 
+Free Edition limit [V: Databricks docs, 2026-10-21]: up to **3 apps per account**; an app stops 24 hours after it is
+started or redeployed (restart it before the demo). Notebook 80 checks the count read-only.
+
 Three screens, all reading Unity Catalog tables through a SQL warehouse and calling the pay-per-token Foundation Model
 endpoints (no new serving endpoint):
 
@@ -277,11 +307,10 @@ endpoints (no new serving endpoint):
 | Notebooks 50, 51, 55, 60, 61, 70, 80; refresh job JSON; Streamlit app | **Written, not run** (CLAUDE.md: you run them) |
 | Survival model, learned reranker, legal-entity supplier register, STEP amendment data, full-portfolio scale-out | **Proposed only** (docs/08_proposal.md) |
 
-## 10. For approval (checkpoint d)
+## 10. Approval record (checkpoint d)
 
-1. Duration model: prior-review main, post-review secondary, quantile GBT vs median baseline, time split, ablations.
-2. Re-bid: label definition and the 50-positive gate between rates and a classifier.
-3. Amendment: transparent score + extracted evidence, no supervised probability on public data.
-4. RAG flow, evaluation set design (you review the synthetic questions), guardrail layers.
-5. Conflict rules and flags.
-6. Vector Search endpoint creation in notebook 60 (D4), behind a flag you switch on.
+Approved by the user on 2026-10-21, with changes 1–7 (top of this document): duration model (prior-review main,
+quantile GBT vs median baseline, time split, ablations); re-bid labels (modification notices excluded) and the
+50-positive gate; amendment indicator + extracted evidence; RAG flow with hybrid retrieval, notice indexing and the
+batched claim verifier; evaluation set with paraphrased synthetic questions and a calibration / test split; conflict
+rules; Vector Search endpoint in notebook 60 (D4) behind a flag; Apps limit checked (3 per account).

@@ -97,7 +97,8 @@ def tools(log_page):
     b, _ = backend()
     return pl.Tools(embed=b.embed, search=b.search, llm=b.chat, similar_contracts=b.similar_contracts,
                     predictions=b.predictions, related_projects=b.related_projects, describes_hits=b.describes_hits,
-                    min_score=min_score(), log=lambda rec: log_request(log_page, rec))
+                    keyword_search=b.keyword_search,   # [] when Vector Search HYBRID mode covers keywords
+                    verify_claims=True, min_score=min_score(), log=lambda rec: log_request(log_page, rec))
 
 
 def user_email():
@@ -144,8 +145,11 @@ def show_result(result, page, key):
         st.markdown(f"- {c['text']}  " + " ".join(f"`{x}`" for x in c["citations"]))
     rep = result.guardrail_report or {}
     if rep.get("removed"):
-        st.caption(f"Guardrails removed {rep['removed']} of {rep['claims']} claims that cited no source, an unknown "
-                   f"source, or a number / project ID not found in the cited source.")
+        ver = rep.get("verifier") or {}
+        n_ver = ver.get("unsupported", 0) + ver.get("no_verdict", 0)
+        st.caption(f"Guardrails removed {rep['removed']} of {rep['claims']} claims: {rep['removed'] - n_ver} failed the "
+                   f"citation checks (no source, unknown source, or a number / project ID not in the cited source) and "
+                   f"{n_ver} were judged not supported by their cited text by the verifier.")
     if result.injection_flags:
         st.caption(f"{len(result.injection_flags)} passage(s) contained instruction-like text and were not shown to the model.")
     with st.expander(f"Sources ({len(result.evidence)} passages, {len(result.facts)} facts)"):
@@ -273,8 +277,8 @@ def monitor_screen():
 
 def ask_screen():
     st.header("Ask the evidence")
-    st.caption("Answers use only the indexed project documents (16 demo projects + country CPFs). Write a project ID "
-               "(e.g. P147864) to search that project's documents.")
+    st.caption("Answers use only the indexed documents (16 demo projects: reports, procurement notices, country "
+               "CPFs). Write a project ID (e.g. P147864) or a contract reference to find it exactly.")
     q = st.text_input("Question", "What procurement lessons do ICRs report for rural road works?")
     as_of = st.date_input("Use documents published up to", value=date.today())
     if st.button("Answer", type="primary") and q:
@@ -286,7 +290,10 @@ def ask_screen():
 def coverage_screen():
     st.header("Data coverage and caveats")
     _, path = backend()
-    st.markdown(f"- Retrieval path in use: **{path}**. Retrieval gate threshold: **{min_score():.2f}**.")
+    b, _ = backend()
+    hybrid = {True: "Vector Search hybrid", False: "vector + keyword fallback", None: "not yet determined"}[b.hybrid_supported]
+    st.markdown(f"- Retrieval path in use: **{path}** (keyword matching: {hybrid if b.vs_index else 'keyword fallback'}). "
+                f"Retrieval gate threshold: **{min_score():.2f}** (calibrated on half of the evaluation set).")
     st.markdown("- Contract data: DS00005 (FY2020+, full), DS04691 (FY2017–19, partial; FY2017 likely incomplete), "
                 "DS01004 (FY≤2016, prior-review only). Coverage is measured against published award notices.\n"
                 "- CPIA covers mainly IDA countries: missing values stay missing, never zero.\n"

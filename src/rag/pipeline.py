@@ -1,10 +1,11 @@
 """The agentic retrieval flow as a fixed sequence of tools (docs/03_model_rag_design.md §3b). Unit-tested with fakes.
 
 Plain-language summary: when a user starts a procurement package, the system runs the same steps every time:
-find similar past contracts (SQL) → get model predictions → find related projects → search their documents and
-sector-wide lessons (vector search) → merge and rerank → refuse if nothing relevant was found → ask the LLM for a
-cited brief → check every claim and drop the unsupported ones. A fixed sequence is easier to test, explain and audit
-than an open-ended agent, and it is enough for this task.
+find similar past contracts (SQL) → get model predictions → find related projects → search their documents,
+sector-wide lessons and past procurement notices (hybrid: vector + keyword) → merge and rerank → refuse if nothing
+relevant was found → ask the LLM for a cited brief → check every claim mechanically → ask a verifier LLM, in one
+batched call, whether each remaining claim is really supported by its sources → drop the unsupported ones.
+A fixed sequence is easier to test, explain and audit than an open-ended agent, and it is enough for this task.
 
 Every data access is a function passed in through `Tools`, so this exact code runs in the evaluation notebook, in
 the app, and in the unit tests (with fake tools).
@@ -15,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from src.guardrails import citation_check as gc
+from src.guardrails import claim_verifier as cv
+from src.rag import keyword as kw
 from src.rag import prompt as pr
 from src.rag import retrieval as rt
 
@@ -22,12 +25,17 @@ from src.rag import retrieval as rt
 @dataclass
 class Tools:
     embed: Callable[[str], list]                         # text -> vector
-    search: Callable[[list, dict, int], list]            # (vector, filters, k) -> hits with 'score'
+    search: Callable[..., list]                          # (vector, filters, k, text) -> hits with 'score'
     llm: Callable[[list], str]                           # chat messages -> raw text
     similar_contracts: Callable[[dict], list] = lambda pkg: []      # -> facts [{"text", "contract_key", ...}]
     predictions: Callable[[dict], list] = lambda pkg: []            # -> facts from models
     related_projects: Callable[[dict, list], list] = lambda pkg, facts: []   # -> project ids
     describes_hits: Callable[[list], list] = lambda contract_keys: []        # -> hits from DESCRIBES links
+    # Keyword side of hybrid retrieval (checkpoint d change 2): (query, filters, k) -> hits with kw_score / id_match.
+    # Leave None when `search` already runs Vector Search in HYBRID mode.
+    keyword_search: Optional[Callable[[str, dict, int], list]] = None
+    verify_claims: bool = True                           # batched claim-support verifier (change 1)
+    verifier_llm: Optional[Callable[[list], str]] = None  # defaults to llm
     min_score: float = 0.55                              # retrieval gate; calibrated in notebook 61
     k_search: int = 12
     k_final: int = 8
@@ -44,7 +52,8 @@ class Result:
     guardrail_report: dict = field(default_factory=dict)
     injection_flags: dict = field(default_factory=dict)  # chunk_id -> phrases; these chunks are quarantined
     retrieved: list = field(default_factory=list)        # ranked chunk_ids (for retrieval metrics)
-    top_score: float = 0.0                               # best similarity (to calibrate the retrieval gate)
+    top_score: float = 0.0                               # best raw similarity (to calibrate the retrieval gate)
+    identifier_hit: bool = False                         # a queried project ID / reference was found verbatim
     timings: dict = field(default_factory=dict)
 
 
@@ -57,21 +66,36 @@ def package_text(pkg):
     return ". ".join(p for p in parts if p)
 
 
-def retrieve(query, pkg, tools, project_ids=(), contract_keys=()):
-    """Steps 3-6: project-scoped search, lessons-scoped search, DESCRIBES links, merge, rerank."""
+def _scope_search(tools, vec, query, filters):
+    """One scope = vector (or Vector Search hybrid) hits, fused with keyword hits when a keyword tool is given."""
+    vh = tools.search(vec, filters, tools.k_search, query)
+    kh = tools.keyword_search(query, filters, tools.k_search) if tools.keyword_search else []
+    return rt.hybrid_merge(vh, kh)
+
+
+def retrieve(query, pkg, tools, project_ids=(), contract_keys=(), task="ask"):
+    """Steps 3-6: project-scoped, lessons-scoped and (for planning) notice-scoped hybrid search, DESCRIBES links,
+    merge, identifier marking, rerank."""
     vec = tools.embed(query)
     as_of = pkg.get("as_of")
     lists = []
     if project_ids:
-        lists.append(("project_scope", tools.search(vec, rt.filters_for(as_of, project_ids=project_ids),
-                                                    tools.k_search)))
-    lists.append(("lessons_scope", tools.search(vec, rt.filters_for(as_of, doc_types=rt.LESSON_DOC_TYPES),
-                                                tools.k_search)))
+        lists.append(("project_scope",
+                      _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids))))
+    lists.append(("lessons_scope",
+                  _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=rt.LESSON_DOC_TYPES))))
+    if task == "plan":   # tender design (L2): past REOI / IFB text with scope and qualification criteria
+        lists.append(("notice_scope",
+                      _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=[rt.NOTICE_DOC_TYPE]))))
     if not project_ids:
-        lists.append(("open_scope", tools.search(vec, rt.filters_for(as_of), tools.k_search)))
+        lists.append(("open_scope", _scope_search(tools, vec, query, rt.filters_for(as_of))))
     if contract_keys:
         lists.append(("describes_link", tools.describes_hits(list(contract_keys))))
-    return rt.rerank(rt.merge(*lists), k=tools.k_final)
+    merged = rt.merge(*lists)
+    ids = kw.identifiers(query)
+    for h in merged:   # mark passages containing a queried identifier, whichever search found them
+        h["id_match"] = h.get("id_match") or (kw.id_match(h.get("text"), ids) if ids else None)
+    return rt.rerank(merged, k=tools.k_final)
 
 
 def run(pkg, tools, task="plan", question=None):
@@ -88,12 +112,16 @@ def run(pkg, tools, task="plan", question=None):
     projects = list(dict.fromkeys(([pkg["project_id"]] if pkg.get("project_id") else []) + named + related))
     query = question if task == "ask" else package_text(pkg)
     t1 = time.time()
-    hits = retrieve(query, pkg, tools, projects, contract_keys)
+    hits = retrieve(query, pkg, tools, projects, contract_keys, task)
     timings["retrieval_s"] = round(time.time() - t1, 2)
-    similarity_hits = [h for h in hits if "describes_link" not in (h.get("found_by") or [])] or hits
+    # Gate: the best RAW similarity must clear the threshold, unless a queried identifier (project ID, contract
+    # reference) was found verbatim: an exact code match is evidence even when embeddings rate it low.
+    sims = [h["vector_score"] if h.get("vector_score") is not None else h.get("score")
+            for h in hits if "describes_link" not in (h.get("found_by") or [])]
     result = Result(status="answered", retrieved=[h["chunk_id"] for h in hits], timings=timings,
-                    top_score=max((h.get("score") or 0.0 for h in similarity_hits), default=0.0))
-    if not gc.retrieval_gate(similarity_hits, tools.min_score):
+                    top_score=max((s for s in sims if s is not None), default=0.0),
+                    identifier_hit=any(h.get("id_match") for h in hits))
+    if not (result.top_score >= tools.min_score or result.identifier_hit):
         result.status = "refused_no_evidence"
         return _log(tools, pkg, result)
     # Quarantine: a passage containing instruction-like text ("ignore previous instructions") is NOT shown to the
@@ -113,8 +141,18 @@ def run(pkg, tools, task="plan", question=None):
     if answer is None:
         result.status = "refused_unparseable"
         return _log(tools, pkg, result)
-    checked = gc.check_answer(answer, {**ev_sources, **f_sources})
-    result.claims, result.removed, result.guardrail_report = checked["claims"], checked["removed"], checked["report"]
+    sources = {**ev_sources, **f_sources}
+    checked = gc.check_answer(answer, sources)                     # mechanical checks first (cheap)
+    kept, removed, report = checked["claims"], list(checked["removed"]), dict(checked["report"])
+    report["verifier"] = None
+    if tools.verify_claims and kept:                               # then ONE batched LLM support check
+        t3 = time.time()
+        kept, v_removed, v_report = cv.verify(kept, sources, tools.verifier_llm or tools.llm)
+        timings["verifier_s"] = round(time.time() - t3, 2)
+        removed += v_removed
+        report.update(kept=len(kept), removed=len(removed), verifier=v_report,
+                      problems=report["problems"] + [p for r in v_removed for p in r["problems"]])
+    result.claims, result.removed, result.guardrail_report = kept, removed, report
     if answer["insufficient_evidence"] or not result.claims:
         result.status = "insufficient_evidence"
     timings["total_s"] = round(time.time() - t0, 2)
@@ -125,5 +163,5 @@ def _log(tools, pkg, result):
     if tools.log:
         tools.log({"package": pkg, "status": result.status, "retrieved": result.retrieved,
                    "guardrail_report": result.guardrail_report, "injection_flags": result.injection_flags,
-                   "timings": result.timings})
+                   "identifier_hit": result.identifier_hit, "timings": result.timings})
     return result

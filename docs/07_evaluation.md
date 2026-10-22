@@ -28,14 +28,20 @@ precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (
 
 ## 4. Retrieval and answers (notebook 61, `ml.rag_eval_results`)
 
-| | n | recall@5 | recall@10 | MRR | citation validity | claim support | refusal accuracy |
+All metrics are on the **test half**. The refusal threshold was set on the calibration half (checkpoint d change 4).
+
+| Test half | n | recall@5 | recall@10 | MRR | citation validity | claim support | refusal accuracy |
 |---|---|---|---|---|---|---|---|
 | All | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
 | Reviewed questions only | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
+| By kind: rating / lesson / tender design (L2) / contract / refusal | _[run]_ | | | | | | |
 | India / China / Mali / Albania / Sri Lanka | _[run]_ | | | | | | |
 
-Retrieval path _[run]_ · gate threshold _[run]_ · judge faithfulness _[run]_ · rating-answer accuracy _[run]_ ·
-prompt injection (quarantined? planted claim survived?) _[run]_
+Retrieval path (hybrid or keyword fallback) _[run]_ · gate threshold and calibration-half pass rate _[run]_ ·
+claims removed: mechanical _[run]_ / verifier unsupported _[run]_ / no verdict _[run]_ · judge second opinion _[run]_ ·
+rating-answer accuracy _[run]_ · synthetic-question word overlap (median; count above 0.5) _[run]_ · prompt injection
+(quarantined? planted claim survived?) _[run]_ · notice chunks indexed (notebook 21) _[run]_ · hybrid identifier check
+(notebook 60) _[run]_ · Re-bid: IFB notices excluded as modifications (notebook 51) _[run]_
 
 ## 5. Early warnings and backtest (notebook 70)
 

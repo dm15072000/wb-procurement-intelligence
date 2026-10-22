@@ -44,6 +44,17 @@
       "timeout_seconds": 10800
     },
     {
+      "task_key": "notice_chunks",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/21_notice_chunks"
+      }
+    },
+    {
       "task_key": "suppliers",
       "depends_on": [
         {
@@ -109,6 +120,9 @@
       "depends_on": [
         {
           "task_key": "documents"
+        },
+        {
+          "task_key": "notice_chunks"
         }
       ],
       "notebook_task": {

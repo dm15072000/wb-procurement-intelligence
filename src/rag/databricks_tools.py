@@ -42,6 +42,10 @@ class DatabricksBackend:
         self.sql, self.w, self.vs_index = sql, workspace_client, vs_index
         self.fallback_rows = fallback_rows
         self.duration_model, self.duration_model_info = duration_model, duration_model_info or {}
+        # Hybrid search (checkpoint d change 2): try Vector Search HYBRID mode once; if the index refuses it, use
+        # ANN + our own keyword index. None = not tried yet.
+        self.hybrid_supported = None
+        self._keyword_index = None
 
     # --- Foundation Model endpoints -------------------------------------------------------------------------------
     def embed(self, text):
@@ -55,13 +59,43 @@ class DatabricksBackend:
         return resp.choices[0].message.content
 
     # --- retrieval ------------------------------------------------------------------------------------------------
-    def search(self, vec, filters, k):
-        if self.vs_index is not None:
-            res = self.vs_index.similarity_search(query_vector=vec, columns=rt.COLUMNS, filters=filters or None,
-                                                  num_results=k)
-            cols = [c["name"] for c in res["manifest"]["columns"]]
-            return [dict(zip(cols, row)) for row in res.get("result", {}).get("data_array", []) or []]
-        return rt.cosine_search(vec, self.fallback_rows or [], filters, k)
+    def _vs(self, vec, filters, k, text=None, hybrid=False):
+        kwargs = dict(query_vector=vec, columns=rt.COLUMNS, filters=filters or None, num_results=k)
+        if hybrid:
+            # Self-managed embeddings: hybrid needs BOTH the vector and the text (Databricks docs, checked 2026-10-21).
+            kwargs.update(query_text=text, query_type="HYBRID")
+        res = self.vs_index.similarity_search(**kwargs)
+        cols = [c["name"] for c in res["manifest"]["columns"]]
+        return [dict(zip(cols, row), hybrid=hybrid) for row in res.get("result", {}).get("data_array", []) or []]
+
+    def search(self, vec, filters, k, text=None):
+        """Vector Search (HYBRID when the index supports it and a text is given), else the cosine fallback."""
+        if self.vs_index is None:
+            return rt.cosine_search(vec, self.fallback_rows or [], filters, k)
+        if text and self.hybrid_supported is not False:
+            try:
+                hits = self._vs(vec, filters, k, text, hybrid=True)
+                self.hybrid_supported = True
+                return hits
+            except Exception:
+                self.hybrid_supported = False      # remembered: keyword_search takes over the keyword side
+        return self._vs(vec, filters, k)
+
+    def needs_keyword_fallback(self):
+        """True when keyword matching must come from our own index (no Vector Search, or HYBRID not supported)."""
+        return self.vs_index is None or self.hybrid_supported is False
+
+    def keyword_search(self, query, filters, k):
+        """Keyword side of hybrid retrieval (BM25 + whole-code identifiers) over the indexed chunk text. Returns []
+        when Vector Search HYBRID mode already does keyword matching."""
+        if not self.needs_keyword_fallback():
+            return []
+        if self._keyword_index is None:
+            from src.rag.keyword import KeywordIndex
+            rows = self.fallback_rows or self.sql(
+                f"SELECT {', '.join(rt.COLUMNS)}, doc_date_int, is_primary FROM {CATALOG}.docs.chunk_embeddings", {})
+            self._keyword_index = KeywordIndex(rows)
+        return self._keyword_index.search(query, filters, k)
 
     def describes_hits(self, contract_keys):
         """Passages that a strong DESCRIBES link says mention one of these contracts. Score = link weight."""

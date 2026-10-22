@@ -9,6 +9,7 @@ so one long report cannot fill every slot.
 import math
 from datetime import date
 
+NOTICE_DOC_TYPE = "Procurement Notice"   # REOI / IFB notice text indexed for slice projects (change 3)
 LESSON_DOC_TYPES = ["Implementation Completion and Results Report", "Implementation Completion Report Review",
                     "Project Performance Assessment Report"]
 AUTHORITY_BONUS = {"Project Performance Assessment Report": 0.03, "Implementation Completion Report Review": 0.03,
@@ -86,16 +87,45 @@ def cosine_search(query_vec, rows, filters, k=10):
     return [dict({c: r.get(c) for c in COLUMNS}, score=s) for s, r in scored]
 
 
+HYBRID_ALPHA = 0.7   # weight of vector similarity vs keyword score in the fallback hybrid (set once, not tuned)
+ID_MATCH_BONUS = 0.30   # an exact project-ID / reference match outranks a merely similar passage (by design)
+
+
+def hybrid_merge(vector_hits, keyword_hits, alpha=HYBRID_ALPHA):
+    """Fallback hybrid (when Vector Search HYBRID mode is unavailable): union by chunk_id; score =
+    alpha * vector similarity + (1 - alpha) * keyword score, a missing side counting 0. The raw similarity is kept as
+    vector_score for the retrieval gate. Hits from Vector Search HYBRID mode (flag 'hybrid') keep their own score."""
+    by_id = {}
+    for h in vector_hits:
+        by_id[h["chunk_id"]] = dict(h, vector_score=h.get("score"), kw_score=None)
+    for h in keyword_hits:
+        cur = by_id.get(h["chunk_id"])
+        if cur:
+            cur["kw_score"], cur["id_match"] = h.get("kw_score"), cur.get("id_match") or h.get("id_match")
+        else:
+            by_id[h["chunk_id"]] = dict(h, vector_score=None)
+    for h in by_id.values():
+        if not h.get("hybrid"):
+            h["score"] = round(alpha * (h.get("vector_score") or 0.0) + (1 - alpha) * (h.get("kw_score") or 0.0), 4)
+    return list(by_id.values())
+
+
 def merge(*hit_lists):
     """Union by chunk_id, keeping the highest score and remembering which searches found it."""
     best = {}
     for name, hits in hit_lists:
         for h in hits:
             cur = best.get(h["chunk_id"])
-            if cur is None or h.get("score", 0) > cur.get("score", 0):
-                best[h["chunk_id"]] = dict(h, found_by=sorted(set((cur or {}).get("found_by", [])) | {name}))
+            if cur is None or (h.get("score") or 0) > (cur.get("score") or 0):
+                new = dict(h, found_by=sorted(set((cur or {}).get("found_by", [])) | {name}))
+                if cur is not None:   # keep the best raw similarity and any identifier match seen
+                    new["vector_score"] = max((x for x in (cur.get("vector_score"), h.get("vector_score"))
+                                               if x is not None), default=None)
+                    new["id_match"] = h.get("id_match") or cur.get("id_match")
+                best[h["chunk_id"]] = new
             else:
                 cur["found_by"] = sorted(set(cur.get("found_by", [])) | {name})
+                cur["id_match"] = cur.get("id_match") or h.get("id_match")
     return list(best.values())
 
 
@@ -105,7 +135,8 @@ def rerank(hits, k=8, per_doc=2):
         sp = (h.get("section_path") or "").lower()
         bonus = AUTHORITY_BONUS.get(h.get("doc_type"), 0.0) + (LESSON_BONUS if any(w in sp for w in LESSON_WORDS) else 0)
         bonus += 0.05 if "describes_link" in (h.get("found_by") or []) else 0.0
-        return h.get("score", 0.0) + bonus
+        bonus += ID_MATCH_BONUS if h.get("id_match") else 0.0
+        return (h.get("score") or 0.0) + bonus
     out, per = [], {}
     for h in sorted(hits, key=final, reverse=True):
         d = h.get("doc_id")

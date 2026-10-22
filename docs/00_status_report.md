@@ -3,6 +3,8 @@
 **Done & measured** = ran on Databricks, numbers in docs/06. **Built & tested** = code written, unit-tested locally,
 notebook not yet run. **Proposed** = written up in docs/08_proposal.md only.
 
+(Updated 2026-10-22 after the checkpoint (d) changes.)
+
 | Assessment item | Status | Where |
 |---|---|---|
 | M1 ETL for CSV/JSON + PDF/Word | Done & measured | notebooks 10, 11, 20; `src/ingest`, `src/chunking` |
@@ -32,10 +34,21 @@ notebook not yet run. **Proposed** = written up in docs/08_proposal.md only.
    Now it's a widget (default unchanged), and the job passes the run date.
 3. **Retry rule:** two Stage 2 scripts called APIs without backoff; they now use the shared retry helper (CLAUDE.md rule).
 
+## Checkpoint (d): approved 2026-10-21 with 7 changes, all implemented and unit-tested (146 tests)
+
+1. Batched claim-support verifier (one LLM call per answer, fails closed, removals counted).
+2. Hybrid retrieval: Vector Search HYBRID mode, or a BM25 + identifier keyword fallback; exact project-ID / reference
+   matches rank first and pass the gate.
+3. Procurement-notice text indexed as "Procurement Notice" (new notebook 21); 5 tender-design (L2) eval questions.
+4. Evaluation split 50/50: threshold calibrated on one half, metrics reported on the other.
+5. Synthetic questions paraphrased, with measured word overlap.
+6. Re-bid label ignores corrigendum / amendment / extension / revised IFB notices.
+7. Apps limit: up to 3 per account on Free Edition, so `wbintelligence2` can stay (notebook 80 checks the count).
+
 ## Still open (needs you)
 
-- Run notebooks 30 → 40 → 50 → 51 → 55 → 60 → 61 → 70 → 80 and paste the summaries (docs/07 gets filled from them).
-- Approve checkpoint (d) (docs/03 §10). Set `CREATE_ENDPOINT = True` in notebook 60 when ready (D4).
+- Run notebooks 30 → 40 → 21 → 50 → 51 → 55 → 60 → 61 → 70 → 80 and paste the summaries (docs/07 gets filled from
+  them). Set `CREATE_ENDPOINT = True` in notebook 60 when ready (D4).
 - Review: the 20-rating sample (55), 20 lessons + 20 events (55), 20 re-bid labels (51), and the LLM-written lesson
   questions (61, set `reviewed = true`).
 - Spot-check the [PROV] verdicts in docs/06 (supplier R3 sample, link review).

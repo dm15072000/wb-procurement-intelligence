@@ -64,21 +64,38 @@ print(report)
 # MAGIC - `doc_date_int` (yyyymmdd): Vector Search filters compare numbers reliably, so the "as of" date rule is numeric.
 # MAGIC - `embed_text` = context header ("[ICR | P147864 | 2019-06-30] V. LESSONS > Procurement") + text, so the
 # MAGIC   vector knows which document and section the passage came from.
+# MAGIC - **Procurement notices** (checkpoint d change 3): REOI / IFB text from `docs.notice_chunks` (notebook 21) is
+# MAGIC   indexed alongside, as doc_type "Procurement Notice", cited by notice ID (no URL).
 
 # COMMAND ----------
 
+notice_sql = ""
+if spark.catalog.tableExists(f"{D}.notice_chunks"):
+    notice_sql = f"""
+  UNION ALL
+  SELECT k.chunk_id, k.doc_id, k.project_id, element_at(p.country_iso3_list, 1) AS country_iso3,
+         k.doc_type, k.doc_date, CAST(date_format(k.doc_date, 'yyyyMMdd') AS INT) AS doc_date_int,
+         k.section_path, k.chunk_type, k.text, k.text_hash, k.is_primary, k.page_start, k.page_end,
+         concat('Procurement notice ', k.notice_id, ': ', k.title) AS title, CAST(NULL AS STRING) AS pdf_url,
+         concat(k.context_header, '\\n', k.text) AS embed_text
+  FROM {D}.notice_chunks k
+  LEFT JOIN {CATALOG}.silver.projects p ON k.project_id = p.project_id"""
+else:
+    print("docs.notice_chunks not found: run notebook 21 to index procurement notices")
 source = spark.sql(f"""
   SELECT k.chunk_id, k.doc_id, k.project_id,
          coalesce(element_at(p.country_iso3_list, 1), cn.iso3) AS country_iso3,
          k.doc_type, k.doc_date, CAST(date_format(k.doc_date, 'yyyyMMdd') AS INT) AS doc_date_int,
          k.section_path, k.chunk_type, k.text, k.text_hash, k.is_primary, k.page_start, k.page_end,
-         d.title, d.pdf_url, concat(k.context_header, '\n', k.text) AS embed_text
+         d.title, d.pdf_url, concat(k.context_header, '\\n', k.text) AS embed_text
   FROM {D}.chunks k
   JOIN {D}.documents d ON k.doc_id = d.doc_id
   LEFT JOIN {CATALOG}.silver.projects p ON k.project_id = p.project_id
-  LEFT JOIN {CATALOG}.silver.countries cn ON d.country = cn.name""")
+  LEFT JOIN {CATALOG}.silver.countries cn ON d.country = cn.name{notice_sql}""")
 source.createOrReplaceTempView("embed_source")
 report["chunks"] = source.count()
+report["chunks_by_doc_type"] = {r.doc_type: r.n for r in source.groupBy("doc_type").count()
+                                .withColumnRenamed("count", "n").collect()}
 
 # COMMAND ----------
 
@@ -182,4 +199,33 @@ if idx is not None:
     for h in vs_hits:
         print(f"vector   {h['score']:.3f} {h['doc_type'][:12]} {h['doc_date']} {h['section_path'][:60]}")
     report["top5_overlap_vs_fallback"] = len({h["chunk_id"] for h in vs_hits} & {h["chunk_id"] for h in fb_hits})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. Hybrid (keyword + vector) check (checkpoint d change 2)
+# MAGIC Is Vector Search HYBRID mode accepted for this self-managed index? Either way, a query naming a contract
+# MAGIC reference must find a passage containing it. The result is saved to `ops.config` for the app and notebook 61.
+
+# COMMAND ----------
+
+ref_row = spark.sql(f"""SELECT evidence FROM {CATALOG}.gold.edges WHERE edge_type = 'DESCRIBES'
+                        AND evidence LIKE '%|ref:%' LIMIT 1""").collect()
+ref = ref_row[0].evidence.split("|ref:", 1)[1].split(" |")[0] if ref_row else None
+q2 = f"What happened to contract {ref}?" if ref else "What happened to contract GYTJ201B?"
+vec2 = backend_fb.embed(q2)
+f2 = rt.filters_for(as_of="2030-01-01")
+fb_kw = backend_fb.keyword_search(q2, f2, 5)
+report["keyword_fallback_identifier_found"] = any(h.get("id_match") for h in fb_kw)
+if idx is not None:
+    b = dt.DatabricksBackend(dt.spark_sql_runner(spark), w, vs_index=idx)
+    hy = b.search(vec2, f2, 5, q2)
+    report["vector_search_hybrid_supported"] = b.hybrid_supported
+    import src.rag.keyword as kwm
+    report["hybrid_identifier_in_top5"] = any(kwm.id_match(h.get("text"), kwm.identifiers(q2)) for h in hy)
+spark.sql(f"CREATE TABLE IF NOT EXISTS {CATALOG}.ops.config (key STRING, value STRING, updated_at TIMESTAMP)")
+spark.sql(f"DELETE FROM {CATALOG}.ops.config WHERE key = 'vs_hybrid_supported'")
+spark.sql(f"""INSERT INTO {CATALOG}.ops.config VALUES ('vs_hybrid_supported',
+              '{report.get("vector_search_hybrid_supported")}', current_timestamp())""")
+print(q2)
 print(json.dumps(report, indent=2))

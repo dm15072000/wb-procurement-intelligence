@@ -17,7 +17,7 @@ disbursements, notices), **how it was executed** (ISRs, procurement plans, notic
 | Stage (§2) | What the user gets | Evidence behind it |
 |---|---|---|
 | Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid rate of similar tenders, similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
-| Tender design & packaging | precedents and lessons on packaging, specifications and market capacity | notice text, PAD procurement sections, ICR lessons (public SBDs/ToRs are scarce, stated) |
+| Tender design & packaging | past scopes and qualification criteria from indexed REOI / IFB notices; lessons on packaging, specifications and market capacity | procurement-notice text, PAD procurement sections, ICR lessons (public SBDs/ToRs are scarce, stated) |
 | Execution & monitoring | early-warning flags with reasons: overdue tenders, disbursement lag, weak ISR ratings, reported problems | duration model, disbursement snapshots, extracted ratings and events |
 | Continuous learning | new ISRs/ICRs become searchable, rated and mined for lessons each week; models retrain under a promotion rule | one Databricks Job, incremental at every step |
 
@@ -151,8 +151,9 @@ real workload.
 
 ### 4.2 Re-bidding risk
 
-- **Labels from the public record**, each with its reason: a second IFB ≥ 30 days later, a cancelled notice, re-bid
-  wording in notice text (English and French), or a Procurement Plan saying so.
+- **Labels from the public record**, each with its reason: a second IFB ≥ 30 days later (corrigenda, addenda,
+  amendments, deadline extensions and "Revised" notices do **not** count: they modify a tender, they don't re-run it),
+  a cancelled notice, re-bid wording in notice text (English and French), or a Procurement Plan saying so.
 - **Rare-event method:** hierarchical Beta-binomial rates (all → category → category×method → country×category×method),
   each shrunk toward its parent, reported with count and 90% interval ("3 of 41 similar tenders were re-bid…"). A
   classifier is trained only with ≥ 50 positives and kept only if it beats the rates on Brier score. **[PEND]** notebook 51.
@@ -173,13 +174,15 @@ A **fixed tool sequence**, which is easier to test, explain and audit than an op
    carrying dataset and coverage status;
 2. models: duration range and re-bid rate (numbers never come from the LLM);
 3. graph: related projects and their documents; project IDs named in a question scope the search;
-4. Vector Search A (those projects) + B (ICR / IEG lessons across the corpus), with `doc_date ≤ as-of` and primary
-   copies only; DESCRIBES passages added;
-5. merge and rerank: similarity + small bonuses for independent sources (IEG > ICR > ISR) and lessons sections, at most
-   2 passages per document;
-6. retrieval gate (threshold calibrated on the evaluation set);
+4. **hybrid** search (vector + keyword: Vector Search HYBRID mode, or BM25 + whole-code identifier matching as a
+   fallback, so references like "GYTJ201B" and project IDs are found exactly): A (those projects), B (ICR / IEG lessons
+   across the corpus) and, for planning, C (**past procurement notices**: REOI / IFB text with scope and qualification
+   criteria, for tender design), all with `doc_date ≤ as-of` and primary copies only; DESCRIBES passages added;
+5. merge and rerank: hybrid score + small bonuses for independent sources (IEG > ICR > ISR) and lessons sections, a
+   larger bonus for an exact identifier match, at most 2 passages per document;
+6. retrieval gate (threshold calibrated on the calibration half of the evaluation set; an exact identifier match passes);
 7. Llama 3.3 70B at temperature 0 → JSON claims with citation IDs;
-8. guardrails (§5).
+8. guardrails (§5), ending with one batched claim-support verifier call.
 
 The same code (`src/rag/pipeline.py`) runs in the evaluation notebook, the app and the unit tests, with the
 data-access functions injected.
@@ -198,6 +201,7 @@ data-access functions injected.
 | Every claim cited | ≥ 1 citation | claim removed |
 | Numbers | every number ≥ 10 appears in a **cited** source (format-normalised, no unit conversion) | claim removed |
 | Identifiers | every project ID appears in a cited source | claim removed |
+| **Claim support** | ONE batched LLM verifier call per answer: each remaining claim next to the exact text of its cited sources; fails closed | claim removed, counted |
 | Extraction quotes | lessons, events and ratings quote their passage word for word | item dropped |
 | Model numbers | durations and rates come from models and SQL, with provenance | — |
 
@@ -246,7 +250,7 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 
 | KPI | Type | Measured how |
 |---|---|---|
-| Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set, per country [PEND] |
+| Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set (test half; the refusal threshold is set on the other half), per country and per question kind incl. tender design [PEND] |
 | Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61 [PEND] |
 | Duration P50 MAE vs baseline, P80 coverage | offline | notebook 50 [PEND] |
 | Re-bid Brier score vs global rate | offline | notebook 51 [PEND] |
@@ -282,9 +286,9 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 
 ## 8. Implemented vs proposed
 
-| Implemented and tested locally (130 unit tests) | Written, not yet run (needs the user's run) | Proposed only |
+| Implemented and tested locally (146 unit tests) | Written, not yet run (needs the user's run) | Proposed only |
 |---|---|---|
-| ingestion transforms, keys, countries, suppliers, chunking, dedup, links, procurement-plan checker, duration features/baseline/metrics/promotion, quantile pipeline and wrapper, re-bid labels and rates, amendment score, ratings and conflict rules, early warnings, RAG retrieval/prompt/pipeline, guardrails, extraction validation, evaluation metrics | notebooks 50, 51, 55, 60, 61, 70, 80; refresh job; app | survival model; learned reranker; legal-entity supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
+| ingestion transforms, keys, countries, suppliers, chunking, dedup, links, procurement-plan checker, duration features/baseline/metrics/promotion, quantile pipeline and wrapper, re-bid labels and rates (modification notices excluded), amendment score, ratings and conflict rules, early warnings, hybrid retrieval (keyword index, identifier matching), notice chunking, RAG prompt/pipeline, guardrails incl. batched claim verifier, extraction validation, evaluation metrics, split and paraphrase checks | notebooks 21, 50, 51, 55, 60, 61, 70, 80; refresh job; app | survival model; learned reranker; legal-entity supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
 
 Notebooks 10–40 ran on 2026-10-21 and their results are in `docs/06_checkpoint_c_report.md`.
 
@@ -297,7 +301,9 @@ Notebooks 10–40 ran on 2026-10-21 and their results are in `docs/06_checkpoint
 2. Re-bid labels are observable only where notices exist; label precision is to be measured on a 20-label review.
 3. Amendment risk is a heuristic indicator on public data.
 4. Contract ↔ passage links are sparse (1.3%); retrieval does not rely on them.
-5. The evaluation set is partly synthetic (LLM-written lesson questions, reviewed by the user); the faithfulness judge
-   is the same model family as the generator.
+5. The evaluation set is partly synthetic (LLM-written, paraphrased questions with measured word overlap, reviewed by
+   the user); the verifier and the judge are the same model family as the generator. Metrics are reported on a held-out
+   half that was not used to set the refusal threshold.
+8. Databricks Apps on Free Edition: up to 3 apps per account, and an app stops 24 hours after it is started.
 6. Lending type is today's classification, not the one at approval.
 7. Supplier identity is brand + country, not legal entity; cross-script aliases are future work.

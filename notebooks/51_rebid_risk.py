@@ -14,6 +14,10 @@
 # MAGIC and a 90% interval. A classifier is trained **only if there are at least 50 positives**, and kept only if it
 # MAGIC beats the rates on the time-based test set (Brier score). The gate is decided by the data and logged.
 # MAGIC
+# MAGIC **Checkpoint (d) change 6:** IFB notices that only modify an earlier one (corrigendum, addendum, amendment,
+# MAGIC deadline extension, status "Revised") do not count as a second invitation. A sample of excluded notices is
+# MAGIC printed in section 5 for review.
+# MAGIC
 # MAGIC No API calls. Inputs: silver.notices, silver.contracts, silver.projects, silver.plan_activity_labels.
 
 # COMMAND ----------
@@ -73,6 +77,11 @@ for tk, ns in notices.items():
                     "contract_method": c["procurement_method"] if c else None,
                     "rebid": lab["rebid"], "reasons": lab["reasons"]})
 report["tenders"] = len(tenders)
+# Checkpoint d change 6: corrigendum / amendment / extension / revised IFB notices modify an invitation, they are not a
+# second round of bidding, so they never count toward "more than one IFB". How many were set aside:
+all_ifbs = [n for ns in notices.values() for n in ns if n["notice_type"] == "Invitation for Bids"]
+report["ifb_notices_excluded_as_modifications"] = sum(lb.is_modification(n) for n in all_ifbs)
+report["ifb_notices"] = len(all_ifbs)
 report["positives"] = sum(t["rebid"] for t in tenders)
 report["reasons"] = dict(Counter(r.split(":")[0] for t in tenders for r in t["reasons"]))
 print(json.dumps(report, indent=2))
@@ -178,6 +187,10 @@ pos = [t for t in tenders if t["rebid"]]
 for t in random.sample(pos, min(20, len(pos))):
     ns = notices[t["tender_key"]]
     print(t["tender_key"], t["start_date"], t["reasons"], "|", (ns[0].get("bid_description") or "")[:100])
+print("\n=== 10 IFB notices excluded as modifications (please check they are corrigenda / extensions) ===")
+for n in random.sample([n for n in all_ifbs if lb.is_modification(n)],
+                       min(10, report["ifb_notices_excluded_as_modifications"])):
+    print(n["tender_key"], n["notice_date"], n["notice_status"], "|", (n.get("bid_description") or "")[:110])
 spark.createDataFrame([(json.dumps(report, default=str),)], "summary string") \
      .write.mode("overwrite").saveAsTable(f"{ML}.rebid_report")
 print(json.dumps(report, indent=2, default=str))

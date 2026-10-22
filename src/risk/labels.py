@@ -20,11 +20,33 @@ REBID_PATTERNS = [
 _REBID = re.compile("|".join(REBID_PATTERNS), re.I)
 MIN_GAP_DAYS = 30   # two IFB notices for the same tender this far apart = advertised again, not a same-week correction
 
+# Notices that MODIFY an existing invitation (corrigendum, addendum, amendment, deadline extension, revision) are not a
+# new round of bidding, so they never count toward the "more than one IFB" rule (checkpoint d change 6, 2026-10-21).
+# Only phrases about the NOTICE itself: "extension of the road" or "road modification" are works, not amendments.
+_NOTICE_WORDS = r"(notice|invitation|ifb|ifq|reoi|bidding document|bid|deadline|closing|submission|opening|date)"
+MODIFICATION_PATTERNS = [
+    r"\bcorrigend", r"\baddend", r"\bamendment (no\.?|number|\d)", r"\bamendment (to|of) (the )?" + _NOTICE_WORDS,
+    r"\b(time|date|deadline|bid|submission|closing) extension", r"\bextension of (the )?(time|" + _NOTICE_WORDS[1:],
+    r"\b(deadline|closing date|submission date|bid opening)\b.{0,40}\b(extend|chang|postpon|revis)",
+    r"\brevised (notice|invitation|ifb|reoi|bidding)", r"\berratum", r"\brectificatif", r"\badditif",
+    r"\bprorogation", r"\breport de (la )?date", r"\bmodification (of|to|de) (the |l.|la )?" + _NOTICE_WORDS,
+]
+_MODIFICATION = re.compile("|".join(MODIFICATION_PATTERNS), re.I)
+
 
 def mentions_rebid(text):
     """The first re-bid phrase found in the text, or None."""
     m = _REBID.search(text or "")
     return m.group(0) if m else None
+
+
+def is_modification(notice):
+    """True if the notice amends / extends / corrects an earlier one: status 'Revised', or a modification phrase in
+    its description or the first 600 characters of its text (the title area, where notices state their purpose)."""
+    if (notice.get("notice_status") or "").lower().startswith("revis"):
+        return True
+    head = f"{notice.get('bid_description') or ''} {(notice.get('notice_text') or '')[:600]}"
+    return bool(_MODIFICATION.search(head))
 
 
 def tender_label(notices, plan_labels=()):
@@ -36,7 +58,8 @@ def tender_label(notices, plan_labels=()):
     """
     reasons = []
     ifb_dates = sorted(n["notice_date"] for n in notices
-                       if n.get("notice_type") == "Invitation for Bids" and n.get("notice_date"))
+                       if n.get("notice_type") == "Invitation for Bids" and n.get("notice_date")
+                       and not is_modification(n))
     if len(ifb_dates) > 1 and (ifb_dates[-1] - ifb_dates[0]).days >= MIN_GAP_DAYS:
         reasons.append(f"ifb_notices:{len(ifb_dates)}")
     if any((n.get("notice_status") or "").lower().startswith("cancel") for n in notices):
