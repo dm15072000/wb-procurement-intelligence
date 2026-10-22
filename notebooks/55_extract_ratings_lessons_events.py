@@ -22,7 +22,8 @@
 # MAGIC **Cost:** pay-per-token calls to the existing Foundation Model endpoint (no new serving endpoint). All reporting
 # MAGIC documents are kept (every ISR); each passage is **pre-filtered** by section and trigger words (user decision
 # MAGIC 2026-10-22). Section 2 is a dry run that prints total chunks, chunks after the filter and the number of calls;
-# MAGIC section 3 will not start until you copy that number into `APPROVED_CALLS`. It runs in batches of 100 and saves
+# MAGIC the notebook then STOPS (widget `mode` = dry_run, the default). To extract, set `mode` = extract and copy the number
+# MAGIC into `APPROVED_CALLS`; section 3 will not start otherwise. It runs in batches of 100 and saves
 # MAGIC after each, so it can be stopped and resumed safely. Ratings stay regex-only (section 1).
 
 # COMMAND ----------
@@ -142,6 +143,25 @@ for label, pool in (("PASSED", [c for c in chunks if c["chunk_id"] in passed_ids
     print(f"\n--- 5 {label} ---")
     for c in random.sample(pool, min(5, len(pool))):
         print(f"{c['doc_type'][:14]} | {(c['section_path'] or '')[:60]} | {' '.join(c['text'].split())[:120]}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Stop here in dry-run mode (the default)
+# MAGIC The `mode` widget is **dry_run** by default: the counts above are saved to `ops.extraction_dry_run` and the
+# MAGIC notebook stops cleanly, with no LLM call. To extract, set the widget to **extract** and set `APPROVED_CALLS` below.
+
+# COMMAND ----------
+
+dbutils.widgets.dropdown("mode", "dry_run", ["dry_run", "extract"])
+dry = {k: v for k, v in scope_info.items()}
+spark.createDataFrame([(datetime.now(timezone.utc), json.dumps(dry, ensure_ascii=False), LLM)],
+                      "run_ts timestamp, scope_json string, endpoint string") \
+     .write.mode("append").saveAsTable(f"{O}.extraction_dry_run")
+if dbutils.widgets.get("mode") == "dry_run":
+    dbutils.notebook.exit(json.dumps({"mode": "dry_run", "total_chunks": dry["total_chunks"],
+                                      "chunks_after_filter": dry["chunks_after_filter"],
+                                      "llm_calls_this_run": dry["estimated_llm_calls_this_run"]}))
 
 # COMMAND ----------
 
