@@ -307,6 +307,20 @@ endpoints (no new serving endpoint):
 | Notebooks 50, 51, 55, 60, 61, 70, 80; refresh job JSON; Streamlit app | **Written, not run** (CLAUDE.md: you run them) |
 | Survival model, learned reranker, legal-entity supplier register, STEP amendment data, full-portfolio scale-out | **Proposed only** (docs/08_proposal.md) |
 
+## 9b. LLM call budget (user decision 2026-10-22)
+
+Model for every generation, extraction, verifier, question-writing and judge call: **Meta Llama 3.3 70B Instruct**
+through the Foundation Model API endpoint `databricks-meta-llama-3-3-70b-instruct` (pay-per-token, temperature 0).
+Embeddings: `databricks-gte-large-en` (1,024 dimensions). Both verified READY on 2026-10-20 (docs/04 §4).
+
+| Notebook | Rule | Estimate before running [A] |
+|---|---|---|
+| 55 extraction | Dry run first (exact count printed, no call). If the full scope is **> 2,000 calls**, use the limited scope automatically: **ICR + ICR Review + latest 3 ISRs per project**. Batches of 100, results and log saved after each batch; re-runs skip chunks already logged with the same `text_hash`; failed rows retried; re-processing is idempotent | full scope ≈ 800–1,350 calls (≈ 700–1,250 events + 70–100 lessons), so probably **under** the budget; limited scope would be ≈ 650–900 |
+| 61 evaluation | Questions are generated once and frozen | first run ≈ 140–235 chat calls (35–70 question writing, 62–124 answer + verifier, 1–2 injection, ≤ 40 judge) + ~65 query embeddings; later runs ≈ 105–165 |
+
+The estimates come from the document mix (≈ 222 ISRs, 16 ICRs, ≈ 12 ICR Reviews in 299 documents, 5,226 chunks) and
+assumed keyword hit rates of 20–45%. They are not measurements: notebook 55's dry-run cell gives the real number.
+
 ## 10. Approval record (checkpoint d)
 
 Approved by the user on 2026-10-21, with changes 1–7 (top of this document): duration model (prior-review main,

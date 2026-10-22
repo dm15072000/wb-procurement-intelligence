@@ -15,7 +15,7 @@ Sync the repo to a Databricks Git folder first. Every notebook imports tested co
 | **3** | `21_notice_chunks.py` | REOI / IFB notice text of slice projects → `docs.notice_chunks` ("Procurement Notice") | no | new |
 | **4** | `50_duration_model.py` | Duration P20/P50/P80, baseline, ablations, MLflow, UC registry, champion rule | no | new |
 | **5** | `51_rebid_risk.py` | Re-bid labels (modification notices excluded), Beta-binomial rates, classifier gate | no | new |
-| **6** | `55_extract_ratings_lessons_events.py` | Ratings (regex) + conflicts; lessons/events via `ai_query` (LLM, pay-per-token) | LLM endpoint | new |
+| **6** | `55_extract_ratings_lessons_events.py` | Ratings (regex) + conflicts; lessons/events via `ai_query`: dry-run count first, limited scope if > 2,000 calls, resumable batches of 100 | LLM endpoint | new |
 | **7** | `60_embeddings_vector_index.py` | Embeddings of report + notice chunks (incremental), Vector Search index (`CREATE_ENDPOINT` flag, D4), fallback test, hybrid check | embedding endpoint, VS | new |
 | **8** | `61_rag_evaluation.py` | Builds the eval set (review the synthetic questions!), 50/50 split, hybrid RAG + verifier, gate calibrated on one half, metrics on the other, injection test | LLM + embeddings | new |
 | **9** | `70_early_warnings.py` | Early-warning flags, amendment indicator, backtest | no | new |

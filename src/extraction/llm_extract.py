@@ -26,12 +26,60 @@ LESSON_DOC_TYPES = {"Implementation Completion and Results Report", "Implementat
 EVENT_DOC_TYPES = LESSON_DOC_TYPES | {"Implementation Status and Results Report", "Project Paper"}
 
 
+CALL_BUDGET = 2000            # above this many calls, the limited scope below is used (user decision 2026-10-22)
+LATEST_ISRS_PER_PROJECT = 3
+LIMITED_DOC_TYPES = {"Implementation Completion and Results Report", "Implementation Completion Report Review"}
+ISR_TYPE = "Implementation Status and Results Report"
+
+
 def wants_lessons(chunk):
     return chunk.get("doc_type") in LESSON_DOC_TYPES and bool(LESSON_SECTION.search(chunk.get("section_path") or ""))
 
 
 def wants_events(chunk):
     return chunk.get("doc_type") in EVENT_DOC_TYPES and bool(EVENT_HINTS.search(chunk.get("text") or ""))
+
+
+def latest_isr_docs(chunks, n=LATEST_ISRS_PER_PROJECT):
+    """{project_id: set of doc_ids of its n most recent ISRs} (by document date, then doc_id for ties)."""
+    docs = {}
+    for c in chunks:
+        if c.get("doc_type") == ISR_TYPE and c.get("project_id"):
+            docs.setdefault(c["project_id"], {})[c["doc_id"]] = str(c.get("doc_date") or "")
+    return {p: {d for d, _ in sorted(ds.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)[:n]}
+            for p, ds in docs.items()}
+
+
+def select_requests(chunks, done=frozenset(), budget=CALL_BUDGET):
+    """Which (chunk, kind) pairs to send to the LLM, and why.
+
+    Full scope: lessons from ICR / IEG lessons sections, events from keyword-matching ISR / ICR / IEG / Project Paper
+    passages (primary copies only). If the FULL scope is larger than `budget`, the limited scope is used instead:
+    ICR and ICR Review passages plus the latest 3 ISRs of each project (no PPARs, no Project Papers, no older ISRs).
+    The scope is decided on the full total, not on what is left, so a re-run never silently widens it.
+    `done` holds (chunk_id, text_hash, kind) already processed: those are skipped, so a re-run resumes.
+    Returns (todo [(chunk, kind)], info dict)."""
+    primary = [c for c in chunks if c.get("is_primary")]
+    full = [(c, k) for c in primary for k, ok in (("lessons", wants_lessons(c)), ("events", wants_events(c))) if ok]
+    limited_mode = len(full) > budget
+    scope = full
+    if limited_mode:
+        latest = latest_isr_docs(primary)
+        scope = [(c, k) for c, k in full
+                 if c["doc_type"] in LIMITED_DOC_TYPES
+                 or (c["doc_type"] == ISR_TYPE and c["doc_id"] in latest.get(c.get("project_id"), set()))]
+    todo = [(c, k) for c, k in scope if (c["chunk_id"], c.get("text_hash"), k) not in done]
+    count = lambda pairs: {k: sum(1 for _, kk in pairs if kk == k) for k in ("lessons", "events")}
+    info = {"full_scope_calls": len(full), "full_scope_by_kind": count(full), "budget": budget,
+            "mode": "limited: ICR + ICR Review + latest 3 ISRs per project" if limited_mode else "full",
+            "scope_calls": len(scope), "scope_by_kind": count(scope),
+            "already_done": len(scope) - len(todo), "calls_this_run": len(todo)}
+    return todo, info
+
+
+def batches(items, size):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
 
 
 LESSON_PROMPT = """Read the passage from a World Bank {doc_type}. Extract lessons that are relevant to procurement or

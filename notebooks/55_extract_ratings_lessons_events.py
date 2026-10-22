@@ -20,7 +20,9 @@
 # MAGIC so, and tags inside them are neutralised.
 # MAGIC
 # MAGIC **Cost:** pay-per-token calls to the existing Foundation Model endpoint (no new serving endpoint). The keyword
-# MAGIC pre-filter keeps the number of calls small; the count is printed before anything is sent.
+# MAGIC pre-filter keeps the number of calls small; section 2 is a dry run that prints the exact count before anything
+# MAGIC is sent. Over 2,000 calls, the scope is limited automatically (ICR + ICR Review + latest 3 ISRs per project).
+# MAGIC Section 3 runs in batches of 100 and saves after each, so it can be stopped and resumed safely.
 
 # COMMAND ----------
 
@@ -38,8 +40,7 @@ from pyspark.sql import functions as F
 
 CATALOG = "procurement"
 S, G, D, O = (f"{CATALOG}.{x}" for x in ("silver", "gold", "docs", "ops"))
-LLM = "databricks-meta-llama-3-3-70b-instruct"
-MAX_LLM_CALLS = 1500       # safety cap per run; raise it on purpose if the count below is larger
+LLM = "databricks-meta-llama-3-3-70b-instruct"   # Foundation Model API, pay-per-token (Meta Llama 3.3 70B Instruct)
 report = {}
 
 chunks = [r.asDict() for r in spark.table(f"{D}.chunks").select(
@@ -104,72 +105,39 @@ print(json.dumps(report["conflicts"], indent=2))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Which passages need the LLM (new ones only)
-# MAGIC Lessons: ICR / IEG passages in lessons / findings / recommendations sections. Events: ISR / ICR / IEG / Project
-# MAGIC Paper passages containing an event keyword (amend, re-bid, cancel, extension, …). Primary copies only.
+# MAGIC ## 2. Which passages need the LLM: DRY RUN (no LLM call in this cell)
+# MAGIC **Full scope:** lessons from ICR / IEG lessons, findings and recommendations sections; events from ISR / ICR / IEG /
+# MAGIC Project Paper passages that contain an event keyword (amend, re-bid, cancel, extension, …). Primary copies only.
+# MAGIC
+# MAGIC **Call budget (user decision 2026-10-22):** if the full scope is over **2,000 calls**, the limited scope is used
+# MAGIC automatically: **ICR + ICR Review passages + the latest 3 ISRs of each project**. The scope is decided on the full
+# MAGIC total, so a re-run never silently widens it (`src/extraction/llm_extract.py::select_requests`, unit-tested).
+# MAGIC
+# MAGIC Chunks already in `ops.extraction_log` with the same `text_hash` are skipped, so a re-run continues where the
+# MAGIC last one stopped. Read the printed counts **before** running section 3.
 
 # COMMAND ----------
 
+CALL_BUDGET = lx.CALL_BUDGET   # 2,000
+BATCH_SIZE = 100               # calls per ai_query batch; results are saved after every batch
 spark.sql(f"""CREATE TABLE IF NOT EXISTS {O}.extraction_log
               (chunk_id STRING, text_hash STRING, kind STRING, n_kept INT, rejected STRING, processed_at TIMESTAMP)""")
 done = {(r.chunk_id, r.text_hash, r.kind) for r in spark.table(f"{O}.extraction_log").collect()}
-todo = []
-for c in chunks:
-    if not c["is_primary"]:
-        continue
-    if lx.wants_lessons(c) and (c["chunk_id"], c["text_hash"], "lessons") not in done:
-        todo.append((c, "lessons", lx.lesson_prompt(c)))
-    if lx.wants_events(c) and (c["chunk_id"], c["text_hash"], "events") not in done:
-        todo.append((c, "events", lx.event_prompt(c)))
-report["llm_calls_needed"] = dict(Counter(k for _, k, _ in todo))
-print(report["llm_calls_needed"])
-assert len(todo) <= MAX_LLM_CALLS, f"{len(todo)} calls > MAX_LLM_CALLS={MAX_LLM_CALLS}: check the filter or raise the cap"
+todo, scope_info = lx.select_requests(chunks, done=done, budget=CALL_BUDGET)
+report["llm_scope"] = scope_info
+print(json.dumps(scope_info, indent=2))
+print(f"-> {scope_info['calls_this_run']} LLM calls in {-(-scope_info['calls_this_run'] // BATCH_SIZE)} batches of "
+      f"{BATCH_SIZE} (endpoint {LLM})")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Call the LLM with `ai_query` (temperature 0) and validate every item
-# MAGIC `failOnError => false` returns errors per row instead of failing the whole batch; failed rows are retried on the
-# MAGIC next run because they are not logged as done.
-
-# COMMAND ----------
-
-if todo:
-    req = spark.createDataFrame([(c["chunk_id"], kind, p) for c, kind, p in todo], "chunk_id string, kind string, prompt string")
-    req.createOrReplaceTempView("extraction_requests")
-    replies = spark.sql(f"""
-      SELECT chunk_id, kind,
-             ai_query('{LLM}', prompt,
-                      modelParameters => named_struct('temperature', 0.0, 'max_tokens', 1200),
-                      failOnError => false) AS r
-      FROM extraction_requests""").select("chunk_id", "kind", "r.result", "r.errorMessage").collect()
-else:
-    replies = []
-
-by_id = {c["chunk_id"]: c for c in chunks}
-lessons, events, log_rows = [], [], []
-rejected_total, errors = Counter(), 0
-now = datetime.now(timezone.utc)
-for r in replies:
-    if r.errorMessage or r.result is None:
-        errors += 1
-        continue
-    c = by_id[r.chunk_id]
-    kept, rej = lx.validate(r.result, c, r.kind)
-    rejected_total.update(rej)
-    for k in kept:
-        k["text_hash"] = c["text_hash"]
-    (lessons if r.kind == "lessons" else events).extend(kept)
-    log_rows.append((r.chunk_id, c["text_hash"], r.kind, len(kept), json.dumps(rej), now))
-report["llm"] = {"calls": len(replies), "errors_retry_next_run": errors, "lessons_kept": len(lessons),
-                 "events_kept": len(events), "items_rejected": dict(rejected_total)}
-print(json.dumps(report["llm"], indent=2))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Save: remove rows from passages that changed or disappeared, then append the new ones
-# MAGIC Events are matched to a contract when their reference equals a contract reference of the same project.
+# MAGIC ## 3. Call the LLM in resumable batches, validate, and save after EVERY batch
+# MAGIC Each batch: `ai_query` (temperature 0, `failOnError => false` so one bad row does not fail the batch) →
+# MAGIC verbatim-quote validation → append lessons / events → log the processed chunks. If the notebook stops (quota,
+# MAGIC timeout, cancel), everything saved so far is kept and the next run starts with the next unprocessed chunk.
+# MAGIC Rows that returned an error are **not** logged, so they are retried on the next run.
+# MAGIC First, rows from passages that changed or disappeared since the last run are removed.
 
 # COMMAND ----------
 
@@ -182,27 +150,74 @@ spark.table(f"{D}.chunks").select("chunk_id", "text_hash").createOrReplaceTempVi
 for t in (f"{G}.lessons", f"{S}.contract_events"):
     spark.sql(f"""DELETE FROM {t} WHERE NOT EXISTS (SELECT 1 FROM current_chunks c
                   WHERE c.chunk_id = {t}.chunk_id AND c.text_hash = {t}.text_hash)""")
+LESSON_SCHEMA, EVENT_SCHEMA = spark.table(f"{G}.lessons").schema, spark.table(f"{S}.contract_events").schema
+LESSON_COLS = [f.name for f in LESSON_SCHEMA]
+EVENT_COLS = [f.name for f in EVENT_SCHEMA]
 
+# Contract references per project, to link an extracted event to a contract.
 refs = defaultdict(dict)
 for r in spark.sql(f"SELECT contract_key, project_id, ref_key FROM {S}.contracts WHERE ref_key IS NOT NULL").collect():
     refs[r.project_id][r.ref_key] = r.contract_key
-for e in events:
-    rk = keys.ref_key(e.get("contract_reference"))
-    e["matched_contract_key"] = refs.get(e["project_id"], {}).get(rk) if rk and len(rk) >= 4 else None
 
-if lessons:
-    spark.createDataFrame([{k: l.get(k) for k in ("lesson", "topic", "quote", "chunk_id", "doc_id", "project_id",
-                                                  "doc_type", "doc_date", "text_hash")} for l in lessons],
-                          spark.table(f"{G}.lessons").schema).write.mode("append").saveAsTable(f"{G}.lessons")
-if events:
-    spark.createDataFrame([{k: e.get(k) for k in ("event_type", "contract_reference", "description", "quote", "chunk_id",
-                                                  "doc_id", "project_id", "doc_type", "doc_date", "text_hash",
-                                                  "matched_contract_key")} for e in events],
-                          spark.table(f"{S}.contract_events").schema).write.mode("append").saveAsTable(f"{S}.contract_events")
-if log_rows:
-    spark.createDataFrame(log_rows, "chunk_id string, text_hash string, kind string, n_kept int, rejected string, "
-                          "processed_at timestamp").write.mode("append").saveAsTable(f"{O}.extraction_log")
-report["events_matched_to_contract"] = sum(1 for e in events if e["matched_contract_key"])
+def run_batch(batch):
+    """One ai_query call over up to BATCH_SIZE prompts; validated results and the log are written before returning."""
+    req = spark.createDataFrame([(c["chunk_id"], kind, lx.lesson_prompt(c) if kind == "lessons" else lx.event_prompt(c))
+                                 for c, kind in batch], "chunk_id string, kind string, prompt string")
+    req.createOrReplaceTempView("extraction_requests")
+    replies = spark.sql(f"""
+      SELECT chunk_id, kind,
+             ai_query('{LLM}', prompt,
+                      modelParameters => named_struct('temperature', 0.0, 'max_tokens', 1200),
+                      failOnError => false) AS r
+      FROM extraction_requests""").select("chunk_id", "kind", "r.result", "r.errorMessage").collect()
+    lessons, events, log_rows, rejected, errors = [], [], [], Counter(), 0
+    now = datetime.now(timezone.utc)
+    for r in replies:
+        if r.errorMessage or r.result is None:
+            errors += 1          # not logged -> retried next run
+            continue
+        c = by_id[r.chunk_id]
+        kept, rej = lx.validate(r.result, c, r.kind)
+        rejected.update(rej)
+        for k in kept:
+            k["text_hash"] = c["text_hash"]
+            if r.kind == "events":
+                rk = keys.ref_key(k.get("contract_reference"))
+                k["matched_contract_key"] = refs.get(k["project_id"], {}).get(rk) if rk and len(rk) >= 4 else None
+        (lessons if r.kind == "lessons" else events).extend(kept)
+        log_rows.append((r.chunk_id, c["text_hash"], r.kind, len(kept), json.dumps(rej), now))
+    # Idempotent: drop any earlier rows for this batch's processed chunks first (e.g. a run that saved results but
+    # stopped before writing the log), so re-processing a chunk never duplicates its lessons or events.
+    for kind, table in (("lessons", f"{G}.lessons"), ("events", f"{S}.contract_events")):
+        ids = sorted({cid for cid, _, k, *_ in log_rows if k == kind})
+        if ids:
+            spark.sql(f"DELETE FROM {table} WHERE chunk_id IN ({', '.join(repr(x) for x in ids)})")
+    if lessons:
+        spark.createDataFrame([{k: l.get(k) for k in LESSON_COLS} for l in lessons], LESSON_SCHEMA) \
+             .write.mode("append").saveAsTable(f"{G}.lessons")
+    if events:
+        spark.createDataFrame([{k: e.get(k) for k in EVENT_COLS} for e in events], EVENT_SCHEMA) \
+             .write.mode("append").saveAsTable(f"{S}.contract_events")
+    if log_rows:           # written LAST: a chunk counts as done only once its results are saved
+        spark.createDataFrame(log_rows, "chunk_id string, text_hash string, kind string, n_kept int, rejected string, "
+                              "processed_at timestamp").write.mode("append").saveAsTable(f"{O}.extraction_log")
+    return {"calls": len(replies), "errors": errors, "lessons": len(lessons), "events": len(events),
+            "matched": sum(1 for e in events if e.get("matched_contract_key")), "rejected": rejected}
+
+by_id = {c["chunk_id"]: c for c in chunks}
+totals = Counter()
+n_batches = -(-len(todo) // BATCH_SIZE)
+for i, batch in enumerate(lx.batches(todo, BATCH_SIZE), 1):
+    res = run_batch(batch)
+    totals.update({k: v for k, v in res.items() if k != "rejected"})
+    totals.update({f"rejected_{k}": v for k, v in res["rejected"].items()})
+    print(f"batch {i}/{n_batches}: {res['calls']} calls, {res['errors']} errors, {res['lessons']} lessons, "
+          f"{res['events']} events kept (saved)")
+report["llm"] = {"calls_this_run": totals["calls"], "errors_retry_next_run": totals["errors"],
+                 "lessons_kept": totals["lessons"], "events_kept": totals["events"],
+                 "events_matched_to_contract": totals["matched"],
+                 "items_rejected": {k[9:]: v for k, v in totals.items() if k.startswith("rejected_")}}
+print(json.dumps(report["llm"], indent=2))
 
 # COMMAND ----------
 
