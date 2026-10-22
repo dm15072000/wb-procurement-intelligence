@@ -197,6 +197,22 @@ if synthetic:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Stop here for the question review (default)
+# MAGIC Widget `stage` = **questions** (default): the evaluation set is built and the notebook stops, so the synthetic
+# MAGIC questions can be reviewed (set `reviewed = true` in `ml.rag_eval_questions`). Set `stage` = **full** to run the
+# MAGIC evaluation.
+
+# COMMAND ----------
+
+dbutils.widgets.dropdown("stage", "questions", ["questions", "full"])
+if dbutils.widgets.get("stage") == "questions":
+    dbutils.notebook.exit(json.dumps({"stage": "questions", "questions": len(questions),
+                                      "by_kind": {k: sum(q["kind"] == k for q in questions) for k in kinds},
+                                      "to_review": sum(not q["reviewed"] for q in questions)}))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 3. Run every question with the gate OFF, recording the top similarity and identifier hits
 # MAGIC Running once with the gate off lets us choose the threshold from the calibration half, then apply it without
 # MAGIC calling the model again (the gate acts before the model is called, so the outcome is identical).

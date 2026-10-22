@@ -18,8 +18,8 @@ Sync the repo to a Databricks Git folder first. Every notebook imports tested co
 | **8** | `51_rebid_risk.py` | Re-bid labels (modification notices excluded), Beta-binomial rates, classifier gate | no | new |
 | **9a** | `55_extract_ratings_lessons_events.py` (default `mode` = dry_run) | Ratings (regex) + conflicts, then the **dry run**: prints TOTAL CHUNKS / AFTER FILTER / LLM CALLS, saves them to `ops.extraction_dry_run` and stops; no LLM calls | no | new |
 | **9b** | `55_extract_ratings_lessons_events.py`, section 3 onwards | Set widget `mode` = extract and `APPROVED_CALLS` to the dry-run number, then run: lessons + events via `ai_query`, resumable batches of 100 | LLM endpoint | after your OK |
-| **10** | `60_embeddings_vector_index.py` | Embeddings of report + notice chunks (incremental), Vector Search index (`CREATE_ENDPOINT` flag, D4), hybrid check | embedding endpoint, VS | new |
-| **11** | `61_rag_evaluation.py` | Eval set (review the synthetic questions!), 50/50 split, hybrid RAG + verifier, calibrated gate, injection test | LLM + embeddings | new |
+| **10** | `60_embeddings_vector_index.py` | Embeddings of report + notice chunks (incremental), Vector Search index (widget `create_endpoint`, D4), hybrid check | embedding endpoint, VS | new |
+| **11** | `61_rag_evaluation.py` | Eval set (stops after building it: widget `stage` = questions; review, then `stage` = full), 50/50 split, hybrid RAG + verifier, calibrated gate, injection test | LLM + embeddings | new |
 | **12** | `70_early_warnings.py` | Early-warning flags, amendment indicator, backtest | no | new |
 | **13** | `80_app_setup.py` | Apps limit check (read-only), ops tables, grants for the app's service principal, deployment steps | no | new |
 

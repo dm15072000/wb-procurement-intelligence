@@ -29,7 +29,7 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-import os, sys, json, time
+import os, sys, json, time, datetime
 sys.path.append(os.path.abspath(".."))
 import importlib
 import src.rag.retrieval as rt
@@ -41,7 +41,10 @@ from pyspark.sql import functions as F
 CATALOG = "procurement"
 D = f"{CATALOG}.docs"
 EMB = f"{D}.chunk_embeddings"
-CREATE_ENDPOINT = False          # set True to create the endpoint (D4) and the index
+# Create the Vector Search endpoint + index only when the `create_endpoint` widget / job parameter is "true" (default
+# "false"). Approved: D4 (2026-10-20) and the user's run instruction of 2026-10-22.
+dbutils.widgets.dropdown("create_endpoint", "false", ["false", "true"])
+CREATE_ENDPOINT = dbutils.widgets.get("create_endpoint") == "true"
 report = {}
 
 # COMMAND ----------
@@ -229,3 +232,14 @@ spark.sql(f"""INSERT INTO {CATALOG}.ops.config VALUES ('vs_hybrid_supported',
               '{report.get("vector_search_hybrid_supported")}', current_timestamp())""")
 print(q2)
 print(json.dumps(report, indent=2))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Save the summary (readable from a job run) and return it.
+
+# COMMAND ----------
+
+spark.createDataFrame([(datetime.datetime.now(datetime.timezone.utc), json.dumps(report, default=str))],
+                      "run_ts timestamp, summary string").write.mode("append").saveAsTable(f"{CATALOG}.ops.embedding_runs")
+dbutils.notebook.exit(json.dumps(report, default=str))
