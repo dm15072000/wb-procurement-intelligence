@@ -119,6 +119,11 @@ price once per member is counted once.
 (3.1%), DS04691 **1,838** of 61,328 (3.0%); DS01004 **0** of 146,802 (every contract is one row). All other notebook 11
 figures were unchanged from checkpoint (c).
 
+**Full data, notice check (notebook 12, run 2026-10-22 17:04 UTC) [M]:** DS00005 408 joint contracts with an award
+notice: **355 shares, 43 one-row, 10 no rate** (one-row share 10.8%); DS04691 52: **40 shares, 5 one-row, 7 no rate**
+(11.1%). Higher than on the 16 demo projects (3–6%) but far below the 25% gate; the one-row cases are listed in
+`ops.joint_award_check` for inspection (likely currency moves and amended prices). DS01004 multi-row contracts: 0.
+
 **Rule (`AMOUNT_BASIS` in `src/ingest/transform.py`):** STEP total = sum of member shares; DS01004 total = its single
 row. Defensive: if DS01004 ever lists a contract on several rows with the same amount, it is counted once and split
 equally (`amount_rule = repeated_full_amount_counted_once`). Award rows stay one per supplier, with the share in
@@ -138,6 +143,12 @@ were already right (they summed shares); what is new is that the rule is explici
 
 The per-project coverage report for the 16 demo projects (`gold.slice_project_coverage`) is written by the same
 notebook; it flags, it does not fail.
+
+**First full-data run (2026-10-22 17:04 UTC) [M]: 14 of 14 checks passed.** 491,020 contracts and 505,772 award rows,
+0 duplicates or orphans; 10,273 universe contracts, 0 unmapped values; 0 fiscal-year mismatches; 0 awards without a
+supplier key; GANSU JINLONGYI known answer passes. **DS01004 suppliers matched to a supplier ID: 6,169 of 69,475
+(8.9%)**, covering 19,797 of 121,644 DS01004 award rows (16.3%). Durations: 3,202 kept, match rate 36.0%.
+Demo-project coverage: identical to the live-API check (P151449 43% low + outlier; P121185 67% outlier; fence 73.7%).
 
 ### Key normalization rules [P] (implemented in `src/entity_resolution/keys.py`, unit-tested)
 
