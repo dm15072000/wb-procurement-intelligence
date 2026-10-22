@@ -26,7 +26,7 @@ def score(ctx):
     Returns {"score", "max_known", "factors": [{factor, points, reason, evidence}], "unknown": [factor ids]}."""
     checks = {
         "large_civil_works": (None if ctx.get("amount_usd") is None or ctx.get("category") is None
-                              else ctx["category"].lower().startswith("civil") and ctx["amount_usd"] > 10e6),
+                              else ctx["category"].strip().lower() in ("works", "civil works") and ctx["amount_usd"] > 10e6),
         "high_value_for_category": (None if ctx.get("amount_usd") is None or ctx.get("category_p75_usd") is None
                                     else ctx["amount_usd"] > ctx["category_p75_usd"]),
         "long_predicted_duration": None if ctx.get("p80_days") is None else ctx["p80_days"] > 365,

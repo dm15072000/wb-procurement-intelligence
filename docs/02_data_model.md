@@ -24,8 +24,8 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 |---|---|---|---|---|
 | **Country** | `iso3` (e.g. `IND`) | World Bank country API [V] | iso2, name, lending_type (IDA/IBRD/Blend), income_level, region | Crosswalk iso2 ↔ iso3 ↔ WB code. Contract `borrower_country_code` is a *WB code that can differ from ISO* [V: DS00005 metadata], so it is mapped through the crosswalk, not assumed. Legacy WB codes (ZR, RY, GZ, TP, YF), region codes and DS01004 country *names* are mapped by `src/entity_resolution/countries.py`, which keeps the original code and records a mapping status; codes that cannot be mapped confidently (YU, AN, SU, XB, pre-2006 YF naming neither country) stay NULL and are reported (docs/04 §8). |
 | **Project** | `project_id` (`P` + 6 digits) [V] | Projects API [V] | name, country iso3, approval FY, board approval date, closing date, status, sectors + % shares, `roads_pct`, IDA/IBRD amounts, lending instrument, env. category, implementing agency | `roads_pct` = share for sector "Rural and Inter-Urban Roads" (slice rule: ≥ 25%). Multi-country projects keep a project→country edge per country. |
-| **Contract** | `contract_key` = `C:{contract number}`: the number alone, so a contract listed in several datasets is one contract | DS00005, DS04691, DS01004 (de-duplicated; precedence DS00005 > DS04691 > DS01004) | project_id, borrower reference no., description, signing date, fiscal year, `coverage_status`, category, method, review type (`"unknown"` when null or absent), **total amount** (sum over suppliers), n_suppliers, `source_dataset`, `also_in` | DS00005 lists a joint venture as **one row per member, with the value split equally** [V: metadata], so a contract is many rows, aggregated to one. |
-| **ContractAward** | (`contract_key`, `supplier_key`) | DS00005, DS01004 | supplier raw name, supplier_id (DS00005 only), supplier country, amount USD | The link between a contract and each supplier. |
+| **Contract** | `contract_key` = `C:{contract number}`: the number alone, so a contract listed in several datasets is one contract | DS00005, DS04691, DS01004 (de-duplicated; precedence DS00005 > DS04691 > DS01004) | project_id, borrower reference no., description, signing date, fiscal year, `coverage_status`, category, method, review type (`"unknown"` when null or absent), **total amount** (sum over suppliers), n_suppliers, `source_dataset`, `also_in` | Joint awards (§2c): STEP datasets list **one row per member holding that member's share** [M: award notices], so the total is the sum; DS01004 has **one row per contract** with the full amount [M]. Category and method are mapped to **one standard set** (§2b); originals kept in `*_raw`. Also `is_joint_award`, `amount_rule`. |
+| **ContractAward** | (`contract_key`, `supplier_key`) | DS00005, DS04691, DS01004 | supplier raw name, supplier_id (STEP only), supplier country, `amount_usd` = the supplier's **share**, `amount_row_usd` = value as published | One row per supplier; supplier features use the share. |
 | **Supplier** | `supplier_key` (`S` + hash of the resolved cluster) | resolution, §4 | canonical name, country, kind (`firm` / `individual`), source supplier_ids, n_name_variants | DS01004 has **no supplier_id** [V], so name resolution is needed. |
 | **Tender** | `tender_key` = `{project_id}:{normalized reference}` | procurement notices + contracts | first notice date, notice types seen, n_IFB_notices | Joins notices to contracts on project ID + normalized reference number (H1 method). |
 | **ProcurementNotice** | `notice_id` (`OP…`) [V] | procnotices API [V] | type, notice date, status, bid reference no., description, procurement group, method code, notice text | Notice text is a retrieval document for L2 (past scope, qualification criteria). |
@@ -35,6 +35,97 @@ Labels: **[V] verified** (a field seen in a Stage 2 API response) · **[P] propo
 | **GovernanceObservation** | (`iso3`, `year`, `indicator`) | Indicators API: CPIA (`IQ.CPA.*`), WGI (`GOV_WGI_*`, source 3) [V] | value, is_missing | CPIA is mostly absent for IBRD countries [M]. |
 | **DisbursementSnapshot** | (`loan_or_credit_no`, `end_of_period`) | DS00975 (IBRD) / DS00976 (IDA) [V: metadata] | project_id, disbursed, undisbursed, cancelled, original principal | Monthly snapshots give the actual disbursement trajectory. |
 | **Rating / Lesson** | (`doc_id`, item seq) | LLM extraction from ISR / ICR / ICR Review sections | rating name, value, source section; lesson text, section | Built in Stage 5 (design at checkpoint d); placeholders in the graph schema now. |
+
+### 2b. Standard category and method values [M] (`src/quality/standard_values.py`, unit-tested)
+
+The three datasets come from different procurement rule books: DS01004 uses the 2004/2011 Guidelines names, the STEP
+datasets the 2016 Framework names. Every contract gets one standard category and method; the original value stays in
+`procurement_category_raw` / `procurement_method_raw`, and `values_mapped = false` marks a spelling the map does not know
+(notebook 12 fails if a universe contract has one). Every raw value below was **seen** in the transport-sector extract
+pulled on 2026-10-22 (DS00005 7,290 rows · DS04691 2,625 · DS01004 6,589); counts are rows in that extract.
+
+**Category**
+
+| Standard | Raw values (rows: DS00005 / DS04691 / DS01004) |
+|---|---|
+| Works | "Works" (2,815 / 1,482 / –), "Civil Works" (– / – / 2,794) |
+| Goods | "Goods" (1,166 / 232 / 975) |
+| Consultant Services | "Consultant Services" (3,082 / 864 / 2,803) |
+| Non-consulting Services | "Non-consulting Services" (227 / 47 / 17) |
+
+**Method** (the family groups methods with the same level of competition; the market is kept where the old name gave it)
+
+| Standard | Family | Raw values (rows: DS00005 / DS04691 / DS01004) |
+|---|---|---|
+| Request for Bids | open_competitive | "Request for Bids" (3,000 / 1,445 / 118); "International Competitive Bidding" (– / 22 / 1,541), market international; "National Competitive Bidding" (– / 14 / 1,630), market national |
+| Request for Proposals | open_competitive | "Request for Proposals" (35 / 16 / 3) |
+| E-Auction | open_competitive | "E-Auctions" (3 / – / –) |
+| Limited Bidding | limited_competitive | "Limited International Bidding" (– / – / 25) |
+| Request for Quotations | limited_competitive | "Request for Quotations" (928 / 124 / 7); "Shopping" (– / – / 194); "National Shopping" (– / – / 5); "International Shopping" (– / – / 8) |
+| QCBS | consultant_competitive | "Quality And Cost-Based Selection" (781 / 303 / 1,377) |
+| QBS | consultant_competitive | "Quality Based Selection" (25 / 9 / 59) |
+| FBS | consultant_competitive | "Fixed Budget Selection" (9 / 5 / 35) |
+| LCS | consultant_competitive | "Least Cost Selection" (81 / 37 / 66) |
+| CQS | consultant_competitive | "Consultant Qualification  Selection", with a double space in the source (393 / 46 / 198); "Selection Based On Consultant's Qualification" (– / – / 5) |
+| Individual Consultant Selection | individual | "Individual Consultant Selection" (1,386 / 341 / 568) |
+| Direct Selection | direct | "Direct Selection" (641 / 151 / 269); "Single Source Selection" (– / 25 / 475) |
+| UN Agencies | direct | "UN Agencies (Direct)" (7 / 9 / –) |
+| Force Account | other | "Force Account" (– / 2 / –) |
+| Community-Driven Development | other | "Community Driven Development" (– / 73 / –) |
+| Non-Profit Organizations | other | "Non-Profit Organizations" (1 / 3 / –) |
+| Service Delivery Contracts | other | "Service Delivery Contracts" (– / – / 6) |
+| unknown | unknown | empty / null |
+
+Effect on the 16 demo projects [M]: 2,092 contracts, 0 unmapped. The map is also written to `ops.standard_value_map`.
+Side effect found and fixed: the amendment score's "large civil works" factor tested for a category starting with
+"civil", so it never fired for STEP contracts (named "Works"); it now accepts both names.
+
+### 2c. Joint awards: member shares, not repeated amounts [M] (`src/quality/joint_awards.py`, unit-tested)
+
+**Question:** when a contract has several suppliers, does each row hold the member's share or the full amount repeated?
+The example asked about, contract **1589938**, is in **DS04691** (P132775, China, CQS, signed 13 Jun 2019): two rows
+(GANSU HENGXIN ENGINEERING CONSULTING, supplier_id 428869; XI'AN MUNICIPAL DESIGN AND RESEARCH INSTITUTE, 428896), each
+**USD 145,047.44**. It is post-review, so no Contract Award notice was published (only the REOI), and it cannot be
+checked on its own; it follows the dataset rule below (total USD 290,094.88).
+
+**Test:** every joint contract of the 16 demo projects with a published Contract Award notice is compared with the
+notice's "Signed Contract Price". Notice prices are mostly in local currency, so single-supplier contracts of the same
+project and currency give the exchange rate the dataset used (USD notices need none). Verdict = whichever is closer to
+the price on a log scale: the **sum** of the rows (shares) or **one** row (repeated). A notice that lists the same JV
+price once per member is counted once.
+
+| Dataset | Joint contracts | All rows equal | With award notice | Sum of rows = price | One row = price | No rate |
+|---|---|---|---|---|---|---|
+| DS00005 | 49 | 41 | 30 | **28** | 1 | 1 |
+| DS04691 | 23 | 20 | 17 | **16** | 1 | 0 |
+| DS01004 | **0** (also 0 of 6,589 transport-sector contracts) | – | – | – | – | – |
+
+- Clear cases: DS00005 1725106 (USD 124,448 × 2 = notice USD 248,896.00) and 1757542 (USD 1,431,705.43 × 2 = notice
+  USD 2,863,410.86); DS04691 1552977 (unequal shares 2,342,282.78 + 2 × 2,273,392.11 = notice USD 6,889,067.00).
+- The 2 "one row" cases (DS00005 1779719, DS04691 1586167, both XOF, Mali) sit within currency and amendment noise (one
+  row = 1.06× and 0.87× the price). They are listed in `ops.joint_award_check`, not corrected.
+- DS01004 amounts are in USD (contract 1537291: USD 1,168,104 vs notice INR 78,190,320, about 67 INR/USD, right for
+  2015). A joint venture is one row with a combined name ("... IN JV WITH ..."); `is_joint_award` also uses that rule.
+
+**Rule (`AMOUNT_BASIS` in `src/ingest/transform.py`):** STEP total = sum of member shares; DS01004 total = its single
+row. Defensive: if DS01004 ever lists a contract on several rows with the same amount, it is counted once and split
+equally (`amount_rule = repeated_full_amount_counted_once`). Award rows stay one per supplier, with the share in
+`amount_usd` (supplier features, graph edge weights) and the published value in `amount_row_usd`. The existing totals
+were already right (they summed shares); what is new is that the rule is explicit per dataset and tested on every run.
+
+### 2d. Data-quality gate (notebook 12, every run) [P thresholds, M baselines]
+
+| Check | Gate (fails the run) | Baseline measured |
+|---|---|---|
+| 2 duplicates | unique keys (contracts, projects, notices); 0 orphan or duplicate award rows | 0 contract numbers in two datasets (491,020 contracts, checkpoint c) |
+| 3 joint awards | total = sum of shares (± USD 0.01); STEP "one row = price" ≤ 25% of decidable; DS01004 multi-row = 0 | 1/29 and 1/17; 0 |
+| 4 standard values | 0 unmapped universe contracts | 0 of 2,092 slice contracts |
+| 5 columns | required fields ≥ 98% filled per dataset; FY = FY(signing date); FY inside the documented range; STEP column sets equal | 100%; 0 of 2,175 slice rows; 21 = 21 columns |
+| 6 suppliers | 0 awards without a key; 0 masked records merged; GANSU JINLONGYI (DS01004 1536520) → supplier_id 323849 | 0; 0; passes in the unit test |
+| 7 durations | start notice is IFB/REOI; 0–1,095 days; match rate ≥ 25% | 36.0% (3,587 / 9,966, checkpoint c) |
+
+The per-project coverage report for the 16 demo projects (`gold.slice_project_coverage`) is written by the same
+notebook; it flags, it does not fail.
 
 ### Key normalization rules [P] (implemented in `src/entity_resolution/keys.py`, unit-tested)
 

@@ -4,9 +4,12 @@ Plain-language summary: raw API records come in many shapes. These functions tur
 typed row for a silver table, following docs/02_data_model.md. Missing values stay missing (None), never 0.
 """
 import json
+import re
 from collections import defaultdict
 
 from src.entity_resolution import keys
+from src.entity_resolution.suppliers import JV_PATTERN
+from src.quality import standard_values as sv
 
 ROADS_SECTOR = "Rural and Inter-Urban Roads"
 
@@ -69,11 +72,40 @@ def in_universe(row, min_roads_pct=25, fy_from=2014, fy_to=2021):
                 and fy_from <= row["approval_fy"] <= fy_to)
 
 
-def contracts_from_awards(rows, source):
-    """DS00005 / DS01004 supplier rows -> (contracts, awards).
+# How each dataset stores the amount of a contract with several suppliers (measured 2026-10-22 against the "Signed
+# Contract Price" of published award notices, src/quality/joint_awards.py, docs/02_data_model.md section 2c):
+#   STEP (DS00005, DS04691): one row per member holding that member's SHARE (equal shares when the split is unknown),
+#                            so the contract total is the SUM of the rows.
+#   DS01004:                 one row per contract (0 of 6,589 transport contracts had two rows); a joint venture is a
+#                            single row with a combined name and the FULL amount.
+AMOUNT_BASIS = {"DS00005": "sum_of_member_shares", "DS04691": "sum_of_member_shares",
+                "DS01004": "single_row_full_amount"}
+_JV_NAME = JV_PATTERN   # same rule as supplier resolution: JV / J V / JOINT VENTURE / CONSORTIUM
 
-    DS00005 lists a joint venture as one row per member with the value split equally (verified), so one contract is
-    many rows. Contracts get the summed amount and the supplier count; awards keep one row per supplier.
+
+def contract_amounts(amounts, source):
+    """Contract total and each supplier's share from the raw row amounts, following AMOUNT_BASIS.
+
+    Defensive rule for DS01004: if it ever lists one contract on several rows that all carry the SAME amount, that is
+    the full price repeated (its documented shape is one row per contract), so the total is that amount once and each
+    supplier's share is total / n. Returns (total or None, [share per row], rule)."""
+    known = [a for a in amounts if a is not None]
+    if not known:
+        return None, [None] * len(amounts), "no_amount"
+    if AMOUNT_BASIS.get(source) == "single_row_full_amount" and len(amounts) > 1 and len(set(amounts)) == 1:
+        total = known[0]
+        return total, [total / len(amounts)] * len(amounts), "repeated_full_amount_counted_once"
+    rule = "single_row" if len(amounts) == 1 else "sum_of_member_shares"
+    return sum(known), list(amounts), rule
+
+
+def contracts_from_awards(rows, source):
+    """DS00005 / DS04691 / DS01004 supplier rows -> (contracts, awards).
+
+    A joint venture in the STEP datasets is one row per member, each with the member's share (verified against award
+    notices). Contracts get the total (AMOUNT_BASIS) and the supplier count; awards keep one row per supplier, with
+    the supplier's share in amount_usd (used for supplier features) and the published row value in amount_row_usd.
+    Category and method are mapped to one standard set (src/quality/standard_values.py); the originals are kept.
     """
     step = source in keys.STEP_DATASETS   # DS00005 and DS04691 share the STEP schema (verified)
     num_field = "wb_contract_number" if step else "contract_number"
@@ -87,7 +119,12 @@ def contracts_from_awards(rows, source):
     for ck, rs in grouped.items():
         first = rs[0]
         signed = keys.parse_date(first.get("contract_signing_date"))
+        fy = first.get("fiscal_year") if isinstance(first.get("fiscal_year"), int) else (
+            keys.fiscal_year(signed) if signed else None)
         amounts = [_amount(r.get(amt_field)) for r in rs]
+        total, shares, amount_rule = contract_amounts(amounts, source)
+        cat, cat_ok = sv.category(first.get("procurement_category"))
+        meth = sv.method(first.get("procurement_method"))
         contracts.append({
             "contract_key": ck,
             "source_dataset": source,
@@ -96,28 +133,35 @@ def contracts_from_awards(rows, source):
             "ref_key": keys.ref_key(first.get("borrower_contract_reference_number")),
             "description": first.get("contract_description"),
             "signing_date": signed,
-            "fiscal_year": first.get("fiscal_year") if isinstance(first.get("fiscal_year"), int) else (keys.fiscal_year(signed) if signed else None),
-            "procurement_category": first.get("procurement_category"),
-            "procurement_method": first.get("procurement_method"),
+            "fiscal_year": fy,
+            "procurement_category": cat,
+            "procurement_method": meth["method"],
+            "method_family": meth["family"],
+            "market_approach": meth["market"],
+            "procurement_category_raw": first.get("procurement_category"),
+            "procurement_method_raw": first.get("procurement_method"),
+            "values_mapped": cat_ok and meth["mapped"],
             # Null review type is stored as "unknown", never guessed. DS01004 has no review-type field at all, so its
             # contracts are "unknown" too, even though the dataset is described as prior-review only.
             "review_type": (first.get("review_type") or "unknown") if step else "unknown",
-            "coverage_status": keys.coverage_status(first.get("fiscal_year") if isinstance(first.get("fiscal_year"), int)
-                                                    else (keys.fiscal_year(signed) if signed else None)),
+            "coverage_status": keys.coverage_status(fy),
             "borrower_country": first.get("borrower_country"),
             "borrower_country_code": first.get("borrower_country_code"),
-            "total_amount_usd": sum(a for a in amounts if a is not None) if any(a is not None for a in amounts) else None,
+            "total_amount_usd": total,
             "n_suppliers": len(rs),
+            "is_joint_award": len(rs) > 1 or any(_JV_NAME.search((r.get("supplier") or "").upper()) for r in rs),
+            "amount_rule": amount_rule,
         })
-        for r, a in zip(rs, amounts):
+        for r, a, share in zip(rs, amounts, shares):
             awards.append({
                 "contract_key": ck,
                 "raw_supplier_name": r.get("supplier"),
                 "supplier_country": r.get("supplier_country"),
                 "supplier_country_code": r.get("supplier_country_code"),
                 "source_supplier_id": str(r["supplier_id"]) if r.get("supplier_id") not in (None, "") else None,
-                "procurement_method": r.get("procurement_method"),
-                "amount_usd": a,
+                "procurement_method": sv.method(r.get("procurement_method"))["method"],
+                "amount_usd": share,
+                "amount_row_usd": a,
             })
     return contracts, awards
 

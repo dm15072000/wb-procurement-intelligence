@@ -103,10 +103,19 @@ assert not missing_slice, f"slice projects outside the universe rule: {missing_s
 
 # MAGIC %md
 # MAGIC ## 2. Contracts and awards: DS00005 + DS04691 + DS01004, de-duplicated
-# MAGIC One contract per contract number, with joint-venture member rows summed. The contract key is the number alone, so
-# MAGIC a contract listed in two datasets collapses to one. The kept copy follows precedence DS00005 > DS04691 > DS01004,
-# MAGIC and only its awards are kept, so amounts are never double-counted. Contracts are kept for **all** projects; the
-# MAGIC universe flag filters later.
+# MAGIC One contract per contract number. The contract key is the number alone, so a contract listed in two datasets
+# MAGIC collapses to one. The kept copy follows precedence DS00005 > DS04691 > DS01004, and only its awards are kept, so
+# MAGIC amounts are never double-counted. Contracts are kept for **all** projects; the universe flag filters later.
+# MAGIC
+# MAGIC **Joint awards (checked 2026-10-22 against award-notice prices, docs/02 §2c):** the STEP datasets list a joint
+# MAGIC venture as one row per member holding that member's **share**, so the total is the sum; DS01004 has one row per
+# MAGIC contract with the full amount. `amount_rule` records which rule was used; each award row keeps the supplier's
+# MAGIC share (`amount_usd`) and the published value (`amount_row_usd`).
+# MAGIC
+# MAGIC **Standard values (docs/02 §2b):** category and method are mapped to one set across the three datasets
+# MAGIC ("Civil Works" → "Works", "International/National Competitive Bidding" → "Request for Bids", "Shopping" →
+# MAGIC "Request for Quotations", ...). The originals stay in `*_raw`; `values_mapped = false` marks a spelling the map
+# MAGIC does not know yet (notebook 12 fails if a universe contract has one).
 
 # COMMAND ----------
 
@@ -125,13 +134,16 @@ for a in awards:
 save(contracts, f"{S}.contracts",
      "contract_key string, source_dataset string, project_id string, borrower_reference string, ref_key string, "
      "description string, signing_date date, fiscal_year int, procurement_category string, procurement_method string, "
-     "review_type string, coverage_status string, borrower_country string, borrower_country_code string, "
-     "total_amount_usd double, n_suppliers int, also_in array<string>, in_universe boolean, "
+     "method_family string, market_approach string, procurement_category_raw string, procurement_method_raw string, "
+     "values_mapped boolean, review_type string, coverage_status string, borrower_country string, "
+     "borrower_country_code string, total_amount_usd double, n_suppliers int, is_joint_award boolean, "
+     "amount_rule string, also_in array<string>, in_universe boolean, "
      "borrower_country_iso3 string, borrower_is_regional boolean, borrower_country_mapping_status string")
+# amount_usd = the supplier's SHARE (used for supplier features); amount_row_usd = the value as published.
 save(awards, f"{S}.contract_awards",
      "contract_key string, raw_supplier_name string, supplier_country string, supplier_country_code string, "
-     "source_supplier_id string, procurement_method string, amount_usd double, supplier_country_iso3 string, "
-     "supplier_country_mapping_status string")
+     "source_supplier_id string, procurement_method string, amount_usd double, amount_row_usd double, "
+     "supplier_country_iso3 string, supplier_country_mapping_status string")
 
 # Sanity check (replaces the old "no contracts in FY2017-19" assertion): each dataset must stay inside the fiscal years
 # its own description documents. A violation means the coverage rules need revisiting, not silent acceptance.
@@ -147,6 +159,10 @@ report["contracts"] = {
     "review_type_by_dataset": {ds: dict(Counter(c["review_type"] for c in per_source[ds][0])) for ds in per_source},
     "kept_contracts_by_coverage_status": dict(Counter(c["coverage_status"] for c in contracts)),
     "universe_contracts_by_dataset": dict(Counter(c["source_dataset"] for c in contracts if c["in_universe"])),
+    "amount_rule_by_dataset": {ds: dict(Counter(c["amount_rule"] for c in contracts if c["source_dataset"] == ds))
+                               for ds in per_source},
+    "unmapped_category_or_method": dict(Counter(f'{c["procurement_category_raw"]} | {c["procurement_method_raw"]}'
+                                                for c in contracts if not c["values_mapped"]).most_common(10)),
 }
 assert not any(out_of_range.values()), f"dataset rows outside their documented fiscal years: {out_of_range}"
 

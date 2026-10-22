@@ -7,19 +7,24 @@ Sync the repo to a Databricks Git folder first. Every notebook imports tested co
 | done | `00_verify_workspace.py` | Read-only checks of workspace features | no | ran 2026-10-20 |
 | done | `01_parser_benchmark.py` | Parser benchmark on 3 ICRs (D6) | yes (3 PDFs) | ran |
 | done | `02_procplan_test.py` | Procurement Plan parse test; stores plan parses | yes | ran |
-| done | `10_ingest_structured.py` | Structured sources → raw JSONL → bronze (resumable; `run_tag` widget) | yes | ran 2026-10-21 |
-| done | `11_silver_structured.py` | Bronze → silver; durations; coverage; quality checks | no | ran |
-| done | `20_ingest_documents.py` | Slice documents → PDFs → parse once → chunks; plan labels | yes | ran |
-| **1** | `30_entity_resolution.py` | Supplier resolution. **Re-run**: R2 bug fix for same-name individuals (2026-10-21) | no | re-run |
-| **2** | `40_build_graph.py` | Graph tables + contract↔passage links (re-run after 30) | no | re-run |
-| **3** | `21_notice_chunks.py` | REOI / IFB notice text of slice projects → `docs.notice_chunks` ("Procurement Notice") | no | new |
-| **4** | `50_duration_model.py` | Duration P20/P50/P80, baseline, ablations, MLflow, UC registry, champion rule | no | new |
-| **5** | `51_rebid_risk.py` | Re-bid labels (modification notices excluded), Beta-binomial rates, classifier gate | no | new |
-| **6** | `55_extract_ratings_lessons_events.py` | Ratings (regex) + conflicts; lessons + events via `ai_query` (one call per passage): section / trigger-word pre-filter (EN + FR), dry-run counts, run after setting `APPROVED_CALLS`, resumable batches of 100 | LLM endpoint | new |
-| **7** | `60_embeddings_vector_index.py` | Embeddings of report + notice chunks (incremental), Vector Search index (`CREATE_ENDPOINT` flag, D4), fallback test, hybrid check | embedding endpoint, VS | new |
-| **8** | `61_rag_evaluation.py` | Builds the eval set (review the synthetic questions!), 50/50 split, hybrid RAG + verifier, gate calibrated on one half, metrics on the other, injection test | LLM + embeddings | new |
-| **9** | `70_early_warnings.py` | Early-warning flags, amendment indicator, backtest | no | new |
-| **10** | `80_app_setup.py` | Apps limit check (read-only), ops tables, grants for the app's service principal, deployment steps | no | new |
+| done | `10_ingest_structured.py` | Structured sources → raw JSONL → bronze (resumable; `run_tag` widget) | yes | ran 2026-10-21; no re-run needed |
+| **1** | `11_silver_structured.py` | Bronze → silver. **Re-run (2026-10-22):** standard category / method values, explicit joint-award amount rule, new columns | no | re-run |
+| **2** | `30_entity_resolution.py` | Supplier resolution (R2 fix 2026-10-21; must follow 11 because award rows changed) | no | re-run |
+| **3** | `12_data_quality.py` | **Data-quality gate**, checks 2–7, fails loudly; joint-award check; demo-project coverage report | no | new |
+| **4** | `20_ingest_documents.py` | Documents: only if not already done. Re-running is safe and skips what exists | yes | optional |
+| **5** | `40_build_graph.py` | Graph tables + contract↔passage links (after 30) | no | re-run |
+| **6** | `21_notice_chunks.py` | REOI / IFB notice text of slice projects → `docs.notice_chunks` ("Procurement Notice") | no | new |
+| **7** | `50_duration_model.py` | Duration P20/P50/P80 (standard method values now), baseline, MLflow, UC registry, champion rule | no | new |
+| **8** | `51_rebid_risk.py` | Re-bid labels (modification notices excluded), Beta-binomial rates, classifier gate | no | new |
+| **9a** | `55_extract_ratings_lessons_events.py`, **sections 1–2 only** | Ratings (regex) + conflicts, then the **dry run**: prints TOTAL CHUNKS / AFTER FILTER / LLM CALLS, no LLM calls | no | new |
+| **9b** | `55_extract_ratings_lessons_events.py`, section 3 onwards | Set `APPROVED_CALLS` to the dry-run number, then run: lessons + events via `ai_query`, resumable batches of 100 | LLM endpoint | after your OK |
+| **10** | `60_embeddings_vector_index.py` | Embeddings of report + notice chunks (incremental), Vector Search index (`CREATE_ENDPOINT` flag, D4), hybrid check | embedding endpoint, VS | new |
+| **11** | `61_rag_evaluation.py` | Eval set (review the synthetic questions!), 50/50 split, hybrid RAG + verifier, calibrated gate, injection test | LLM + embeddings | new |
+| **12** | `70_early_warnings.py` | Early-warning flags, amendment indicator, backtest | no | new |
+| **13** | `80_app_setup.py` | Apps limit check (read-only), ops tables, grants for the app's service principal, deployment steps | no | new |
+
+If notebook 12 fails, stop: its output names the failed check and up to 5 examples; the models (50, 51) must not run on
+a refresh that failed the gate. The weekly job enforces this order (50, 51 and 40 depend on the gate).
 
 Each notebook ends with a **summary cell**: paste its output back, and the numbers go into `docs/07_evaluation.md`.
 Re-running is safe: downloads, parsing, embeddings and LLM extraction skip what's already done.

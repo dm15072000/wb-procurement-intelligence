@@ -66,6 +66,20 @@
       }
     },
     {
+      "task_key": "data_quality",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        },
+        {
+          "task_key": "suppliers"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/12_data_quality"
+      }
+    },
+    {
       "task_key": "graph",
       "depends_on": [
         {
@@ -73,6 +87,9 @@
         },
         {
           "task_key": "documents"
+        },
+        {
+          "task_key": "data_quality"
         }
       ],
       "notebook_task": {
@@ -84,6 +101,9 @@
       "depends_on": [
         {
           "task_key": "silver"
+        },
+        {
+          "task_key": "data_quality"
         }
       ],
       "notebook_task": {
@@ -98,6 +118,9 @@
         },
         {
           "task_key": "documents"
+        },
+        {
+          "task_key": "data_quality"
         }
       ],
       "notebook_task": {

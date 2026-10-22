@@ -8,6 +8,7 @@ notebook not yet run. **Proposed** = written up in docs/08_proposal.md only.
 | Assessment item | Status | Where |
 |---|---|---|
 | M1 ETL for CSV/JSON + PDF/Word | Done & measured | notebooks 10, 11, 20; `src/ingest`, `src/chunking` |
+| D2 Data quality (joint awards, standard values, coverage, automated gate) | Built & tested; checked on the 16 demo projects with live API data (2026-10-22); gate runs in notebook 12 | `src/quality`, notebook 12, docs/02 §2b–2d |
 | M1 Entity resolution / KG across disjoint keys | Done & measured (supplier step needs a re-run after a bug fix) | notebooks 30, 40; `src/entity_resolution`, `src/graph` |
 | M1 Parsing, chunking, embedding of long reports | Parsing/chunking done & measured; embeddings built & tested | notebooks 20, 60 |
 | M2 Timeline benchmarking (duration) | Built & tested | notebook 50; `src/models` |

@@ -350,7 +350,7 @@ print(json.dumps(test_a, indent=2))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 7. Test (b): how much of the FY2017–FY2019 gap do the plans cover?
+# MAGIC ## 7. Test (b): how much of the FY2017–FY2019 gap do the plans cover? (historical: written before DS04691 showed FY2017–19 contracts exist, partially covered)
 # MAGIC World Bank FY2017–FY2019 = 1 July 2016 to 30 June 2019. Both contract datasets have **zero** rows in that window
 # MAGIC (verified). We count clean plan activities with an *actual* signing date inside it.
 

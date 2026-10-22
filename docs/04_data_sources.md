@@ -141,7 +141,7 @@ Follow-ups [P]:
 | Format | **Machine-generated, not scanned.** ~95% have report number `STEP…` (exported from STEP); **100% have a plain-text version** (`txturl`) besides the PDF [M] |
 | Structure | **Semi-structured, not structured data.** Narrative policy text (methods, prior-review thresholds), then a very wide fixed-width table per category: *Activity Reference No.*, method, market approach, estimated/actual amount, and **Planned / Actual dates for each process step** (bid documents, bid opening, evaluation report, contract signing) [V, one plan inspected]. Column headers are truncated in the text ("Market Approac", "Estimated Am"). |
 | Versions | Each version is a revised snapshot of the same plan, so the latest version per project holds the most actual dates [A] |
-| Value | Planned vs. actual dates per activity give a **direct schedule-slippage measure** (L1/L3). Actual step dates could also give a **better tender-duration target than H1**, and plans dated 2016–2020 may partly cover the FY2017–FY2019 contract gap [A, to test]. |
+| Value | Planned vs. actual dates per activity give a **direct schedule-slippage measure** (L1/L3). Actual step dates could also give a **better tender-duration target than H1**, and plans dated 2016–2020 may partly cover the FY2017–FY2019 contract gap [A, to test]. *(Written before DS04691 was found on 2026-10-21: FY2017–19 contracts exist, with partial coverage, so there is no gap to fill.)* |
 | Cost to use | Needs a parser for the fixed-width tables (text, or pdfplumber tables on the PDF). Moderate effort. |
 
 **Your call [P]:** the plans are not scanned, but they are also not structured data, so strictly they fall short of
@@ -218,7 +218,8 @@ Plan dates are already out of the models (decision 2026-10-21), so this changes 
   This matches the future "actual" date (2027-12-14) noted above.
 - For prior-review contracts, the scope where the duration model is valid, the join is cleaner on every measure.
 
-**Test (b): FY2017–FY2019 gap coverage: unverified [M].** 53 of 138 clean activities with a signing date fall in
+**Test (b): FY2017–FY2019 gap coverage: unverified [M].** *(Historical: run before DS04691 showed that FY2017–19
+contracts exist, partially covered.)* 53 of 138 clean activities with a signing date fall in
 FY2017–19 (Prior 10, Post 43), from 7 projects (P121185, P143751, P144726, P145778, P147864 India; P132621 China;
 P132833 Sri Lanka). They use the same signing column that agrees with DS00005 only 20% of the time, so **53 is an
 unverified upper bound**, not coverage. None come from Mali.
