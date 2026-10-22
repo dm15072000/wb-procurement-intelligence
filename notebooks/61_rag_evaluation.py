@@ -133,7 +133,7 @@ if REBUILD_QUESTIONS or not exists:
     def add(qid, kind, question, gold, expected=None, should_refuse=False, pid=None, reviewed=True, overlap=None):
         qs.append({"qid": qid, "kind": kind, "question": question, "gold": gold, "expected": expected,
                    "should_refuse": should_refuse, "country_iso3": country_of.get(pid), "reviewed": reviewed,
-                   "overlap_with_gold": overlap})
+                   "overlap_with_gold": overlap, "project_id": pid})
     # (a) rating look-ups from ICR outcome ratings
     for r in spark.sql(f"""SELECT project_id, chunk_id, value FROM {G}.ratings
                            WHERE doc_type = 'Implementation Completion and Results Report' AND dimension = 'outcome'""").collect():
@@ -181,14 +181,14 @@ if REBUILD_QUESTIONS or not exists:
                            "What did the ICR say about the Peru school feeding programme?",
                            "Which bidders qualified for the Mongolia coal power plant tender?"]):
         add(f"refuse:{i}", "refusal", q, [], should_refuse=True)
-    calib, test = eq.split_half(qs)
+    calib, test = eq.split_half(qs, group="project_id")   # one project's questions never straddle the halves
     for q in calib:
         q["split"] = "calibration"
     for q in test:
         q["split"] = "test"
     spark.createDataFrame(qs, "qid string, kind string, question string, gold array<string>, expected string, "
                           "should_refuse boolean, country_iso3 string, reviewed boolean, overlap_with_gold double, "
-                          "split string") \
+                          "project_id string, split string") \
          .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{ML}.rag_eval_questions")
     print(f"built {len(qs)} questions; review the synthetic ones in {ML}.rag_eval_questions and set reviewed = true")
 questions = [r.asDict() for r in spark.table(f"{ML}.rag_eval_questions").collect()]

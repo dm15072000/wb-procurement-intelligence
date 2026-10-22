@@ -83,3 +83,60 @@ template notice answers it. Suggested fix: sample at most one notice per project
 
 Only 3 rating questions: the regex found an ICR outcome rating for 3 of the 16 projects (the IEG reviews give
 12 more outcome ratings, which could be added as questions).
+
+
+## Final frozen set (applied 2026-10-22, your instructions)
+
+Changes: the 4 duplicate Madhya Pradesh tender-design questions replaced by notices from 4 other projects and countries (Mali P151449, Albania P132982, India P147864, Sri Lanka P132833), so the 5 tender-design questions cover 5 countries; the Sri Lanka question 34345370-0052 replaced by one on its passage's first lesson (para 88, flexibility to change scope), since its safety angle duplicated the IEG-review question; the 7 questions above 0.5 overlap rephrased; **halves now split by project** (`split_half(group="project_id")`), so the ICR and IEG-review copies of a lesson, and neighbouring passages of one report, are always in the same half. Two projects appear in both halves only as a lesson (ICR) in one and a tender question (bid notice) in the other: different documents, not a leak. All 49 are `reviewed = true`; the previous set is kept in `ml.rag_eval_questions_v1`. Rewritten questions were written by the assistant against the full passage and checked with the notebook's own overlap measure (max 0.5).
+
+| # | Half | Kind | Country | Question | Overlap | Change |
+|---|---|---|---|---|---|---|
+| 1 | calibration | rating | IND | What overall outcome rating did the Implementation Completion and Results Report give project P144726? |  | kept |
+| 2 | calibration | rating | IND | What overall outcome rating did the Implementation Completion and Results Report give project P155522? |  | kept |
+| 3 | test | rating | LKA | What overall outcome rating did the Implementation Completion and Results Report give project P132833? |  | kept |
+| 4 | calibration | lesson | CHN | What strategies can be used to manage funding risks and ensure timely implementation of rural road construction plans, particularly in cases where local government funding is uncertain? | 0.412 | kept |
+| 5 | calibration | lesson | CHN | What strategies can be used to ensure timely funding and avoid delays in rural road construction, particularly when working with local governments that may have varying levels of financial commitment? | 0.35 | kept |
+| 6 | calibration | lesson | CHN | What strategies can be used to attract large, reputable suppliers and drive down costs when procuring goods and services for a major infrastructure development? | 0.438 | kept |
+| 7 | calibration | lesson | CHN | What strategies can be used to manage procurement effectively and attract competitive bids from large suppliers for a major infrastructure development? | 0.231 | kept |
+| 8 | calibration | lesson | CHN | What factors can be built into the design of a road construction project to minimize potential environmental and social risks, and ensure that the project is successfully implemented and sustainable? | 0.429 | kept |
+| 9 | calibration | lesson | CHN | What strategies can be used to minimize the social and environmental impacts of a new road construction, and how can these considerations be effectively integrated into the project planning process? | 0.231 | kept |
+| 10 | calibration | lesson | LKA | Why did being willing to change a project's scope and methods help it reach its results through a pandemic and an economic crisis? | 0.286 | rephrased |
+| 11 | calibration | lesson | LKA | What strategies can be used to prevent delays and financial issues in road construction contracts, and how can road agencies better manage contracts to ensure timely completion of projects? | 0.385 | kept |
+| 12 | calibration | lesson | LKA | What steps can be taken to ensure that road construction contractors are adequately trained and aware of on-site safety protocols to minimize the risk of accidents and fatalities? | 0.467 | kept |
+| 13 | calibration | lesson | LKA | What are the potential consequences for a road agency if it decides to cancel a contract with a contractor who is not meeting expectations, and are there any alternative strategies that can be used to bring the project back on track? | 0.188 | kept |
+| 14 | calibration | lesson | IND | What strategies have been effective in expediting the land acquisition process for road construction, and how can they be applied to minimize delays in building new infrastructure? | 0.429 | kept |
+| 15 | calibration | lesson | IND | What allowed coastal storm refuges to come through recent severe cyclones intact, and what keeps them usable in later years? | 0.333 | rephrased |
+| 16 | calibration | lesson | IND | What strategies can be used to build the capacity of local institutions and ensure their effective participation in a large-scale infrastructure development initiative? | 0.267 | kept |
+| 17 | calibration | lesson | IND | Apart from surviving storms, how have villagers used the coastal refuges, and what arrangements keep them maintained? | 0.083 | rephrased |
+| 18 | calibration | lesson | IND | How can regular dialogue with people living along the routes help a road rehabilitation programme deliver more efficiently? | 0.417 | rephrased |
+| 19 | test | lesson | IND | What are the advantages and disadvantages of having national versus state-level agencies oversee and manage contracts for major road construction projects? | 0.5 | kept |
+| 20 | test | lesson | IND | What are the potential benefits and drawbacks of using a single contractor for both design and construction in a road construction project, and how can we ensure that this approach is managed effectively to avoid cost overruns and delays? | 0.471 | kept |
+| 21 | test | lesson | ALB | How can we effectively allocate and manage the risks associated with extreme weather events in our road maintenance contracts to ensure cost efficiency and accountability? | 0.5 | kept |
+| 22 | test | lesson | ALB | Who currently bears the cost when severe weather damages roads under performance-based upkeep contracts, and why does that threaten their value for money? | 0.375 | rephrased |
+| 23 | test | lesson | IND | What strategies can be used to prevent landslides and stabilize slopes in mountainous areas during road construction, and how effective are they in terms of cost and environmental impact? | 0.375 | kept |
+| 24 | test | lesson | IND | What strategies can be used to ensure that all relevant government agencies and stakeholders are fully committed to and coordinated on a road construction project before it begins? | 0.308 | kept |
+| 25 | test | lesson | MLI | How can we ensure that the benefits and costs of partnering with a dominant private sector company are fairly distributed among all stakeholders in a publicly-funded infrastructure development initiative? | 0.412 | kept |
+| 26 | test | lesson | MLI | What strategies can be used to improve the selection and oversight of construction companies to ensure they can deliver quality results and honor contract terms for infrastructure development, such as road construction? | 0.471 | kept |
+| 27 | test | lesson | MLI | What strategies can be used to effectively manage relationships and expectations with multiple public agencies involved in a road construction project to ensure their contributions lead to successful outcomes? | 0.353 | kept |
+| 28 | test | lesson | CHN | What design considerations and features should be prioritized when building emergency shelters to ensure they can effectively serve both emergency response needs and community uses? | 0.353 | kept |
+| 29 | test | lesson | CHN | What trade-off arose when kerbs were lowered at the request of shopkeepers, and which hazards did that create? | 0.2 | rephrased |
+| 30 | test | lesson | CHN | What factors should be considered when designing infrastructure to mitigate the impact of natural disasters, in order to maximize its effectiveness and potential benefits to the surrounding community? | 0.412 | kept |
+| 31 | test | lesson | IND | Which preparation choices, such as awarding part of the works before the loan was negotiated, kept a state rural-access programme on schedule? | 0.267 | rephrased |
+| 32 | test | lesson | IND | What strategies can be employed during the planning phase of a road construction initiative to minimize the risk of delays and ensure successful implementation? | 0.231 | kept |
+| 33 | test | lesson | MLI | What strategies can be employed to effectively engage with local communities and ensure project ownership in areas with high levels of instability and security concerns? | 0.429 | kept |
+| 34 | calibration | tender_design | LKA | How many years in the business did suppliers and makers of automatic vehicle-counting equipment need for the Sri Lanka contracts? | 0.417 | new |
+| 35 | calibration | tender_design | ALB | Which three aspects of a firm's track record and standing did the Albanian roads agency assess before letting it compete? | 0.25 | new |
+| 36 | calibration | tender_design | MLI | What minimum yearly revenue did contractors need to show to compete for the Mali rural works lots, and how was that figure to be worked out? | 0.071 | new |
+| 37 | test | tender_design | IND | What financial size, founding date and prior work were demanded of advisers for a northern Indian state's traffic-safety study? | 0.357 | new |
+| 38 | test | tender_design | CHN | What proof of capability did the Sichuan quake-recovery tender for disaster-monitoring gear demand from competing firms? | 0.25 | rephrased |
+| 39 | calibration | contract | CHN | What do the project documents report about contract GYTJ201B (Subgrade works on Batch 2, a single Class IV road upgraded to a Class II road, 1)? |  | kept |
+| 40 | calibration | contract | CHN | What do the project documents report about contract GYNL202 (Maintenance Pilot Design Contract)? |  | kept |
+| 41 | calibration | contract | CHN | What do the project documents report about contract TA-7 (External resettlement monitoring)? |  | kept |
+| 42 | test | contract | CHN | What do the project documents report about contract HAMP-GD-02 (YHB cloud computation data center)? |  | kept |
+| 43 | test | contract | CHN | What do the project documents report about contract HAMP-CS-01 (development of highway asset valuation guidelines, conduction of highway asset v)? |  | kept |
+| 44 | calibration | refusal |  | What lessons were learned from hospital construction contracts in Brazil? |  | kept |
+| 45 | calibration | refusal |  | What was the outcome rating of the Bolivia urban water supply project? |  | kept |
+| 46 | calibration | refusal |  | Which supplier won the satellite launch contract for the Kenya space programme? |  | kept |
+| 47 | test | refusal |  | How long did pharmaceutical procurement take in the Philippines health project? |  | kept |
+| 48 | test | refusal |  | What did the ICR say about the Peru school feeding programme? |  | kept |
+| 49 | test | refusal |  | Which bidders qualified for the Mongolia coal power plant tender? |  | kept |

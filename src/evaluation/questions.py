@@ -62,17 +62,34 @@ def generate_question(chat, kind, passage):
     return best
 
 
-def split_half(questions, key="qid", strat="kind"):
+def split_half(questions, key="qid", strat="kind", group=None):
     """Deterministic, stratified 50/50 split -> (calibration, test). Within each kind, questions are ordered by a hash
-    of their ID and alternated, so each half gets about half of every kind."""
+    of their ID and alternated, so each half gets about half of every kind.
+
+    group (e.g. "project_id"): questions sharing a group value always land in the SAME half (2026-10-22 review: an
+    ICR and its IEG review state the same lesson, and two questions from neighbouring passages of one report are near
+    duplicates; calibrating on one and testing on the other leaks). Whole groups, ordered by hash, go to the half with
+    fewer questions so far. Questions with no group value form their own group."""
     by_kind = defaultdict(list)
     for q in questions:
         by_kind[q.get(strat)].append(q)
     calib, test = [], []
+    h = lambda x: hashlib.sha1(str(x).encode()).hexdigest()
     for kind in sorted(by_kind, key=str):
-        ordered = sorted(by_kind[kind], key=lambda q: hashlib.sha1(str(q[key]).encode()).hexdigest())
-        for i, q in enumerate(ordered):
-            (calib if i % 2 == 0 else test).append(q)
+        if group is None:
+            ordered = sorted(by_kind[kind], key=lambda q: h(q[key]))
+            for i, q in enumerate(ordered):
+                (calib if i % 2 == 0 else test).append(q)
+            continue
+        groups = defaultdict(list)
+        for q in by_kind[kind]:
+            groups[q.get(group) or f"__{q[key]}"].append(q)
+        n_c = n_t = 0
+        for g in sorted(groups, key=lambda g: (-len(groups[g]), h(g))):     # big groups first, then by hash
+            if n_c <= n_t:
+                calib += groups[g]; n_c += len(groups[g])
+            else:
+                test += groups[g]; n_t += len(groups[g])
     return calib, test
 
 

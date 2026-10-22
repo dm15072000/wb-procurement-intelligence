@@ -219,3 +219,15 @@ def test_corrigendum_amendment_extension_do_not_count_as_second_ifb():
         assert lb.tender_label([first, later])["rebid"] is False, later
     # a genuine second invitation still counts, and works wording like "extension of the road" is not a modification
     assert lb.tender_label([first, _n(date(2020, 4, 1), "Extension of the road to Kiban, Package 4")])["rebid"]
+
+
+def test_split_half_keeps_a_group_in_one_half():
+    from src.evaluation import questions as eq
+    qs = ([{"qid": f"a{i}", "kind": "lesson", "project_id": "P1"} for i in range(4)]
+          + [{"qid": f"b{i}", "kind": "lesson", "project_id": "P2"} for i in range(2)]
+          + [{"qid": f"c{i}", "kind": "lesson", "project_id": None} for i in range(2)])
+    calib, test = eq.split_half(qs, group="project_id")
+    for pid in ("P1", "P2"):
+        halves = {("c" if q in calib else "t") for q in qs if q["project_id"] == pid}
+        assert len(halves) == 1
+    assert len(calib) == 4 and len(test) == 4
