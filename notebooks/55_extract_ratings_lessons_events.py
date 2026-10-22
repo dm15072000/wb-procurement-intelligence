@@ -76,7 +76,7 @@ ratings = uniq
 spark.createDataFrame(ratings, "dimension string, value string, score int, matched string, chunk_id string, "
                       "doc_id string, project_id string, doc_type string, doc_date date") \
      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{G}.ratings")
-report["ratings"] = {"rows": len(ratings), "by_doc_type_dimension": dict(Counter((r["doc_type"][:30], r["dimension"])
+report["ratings"] = {"rows": len(ratings), "by_doc_type_dimension": dict(Counter(f'{r["doc_type"][:30]} | {r["dimension"]}'
                                                                                for r in ratings).most_common())}
 import random
 random.seed(1)
@@ -227,8 +227,7 @@ def run_batch(batch):
         for k in kept_l + kept_e:
             k["text_hash"] = c["text_hash"]
         for k in kept_e:
-            rk = keys.ref_key(k.get("contract_reference"))
-            k["matched_contract_key"] = refs.get(k["project_id"], {}).get(rk) if rk and len(rk) >= 4 else None
+            k["matched_contract_key"] = lx.match_contract(k.get("contract_reference"), refs.get(k["project_id"], {}))
         lessons += kept_l
         events += kept_e
         log_rows.append((r.chunk_id, c["text_hash"], lx.KIND, len(kept_l) + len(kept_e),
@@ -268,6 +267,13 @@ for i, batch in enumerate(lx.batches(todo, BATCH_SIZE), 1):
         stopped_early = f"batch {i}: all {res['calls']} calls failed (quota / endpoint unavailable); resume later"
         print("STOPPING EARLY:", stopped_early)
         break
+# Re-link ALL saved events to contracts with the current matching rule (no LLM call; cheap), so a better rule also
+# applies to events extracted by earlier runs.
+ev = spark.table(f"{S}.contract_events").toPandas()
+if len(ev):
+    ev["matched_contract_key"] = [lx.match_contract(r, refs.get(p, {})) for r, p in zip(ev.contract_reference, ev.project_id)]
+    spark.createDataFrame(ev, EVENT_SCHEMA).write.mode("overwrite").saveAsTable(f"{S}.contract_events")
+report["events_linked_to_a_contract"] = int(ev["matched_contract_key"].notna().sum()) if len(ev) else 0
 report["llm"] = {"stopped_early": stopped_early, "batches_run": i if todo else 0, "batches_planned": n_batches,
                  "calls_this_run": totals["calls"], "errors_retry_next_run": totals["errors"],
                  "lessons_kept": totals["lessons"], "events_kept": totals["events"],

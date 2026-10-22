@@ -128,6 +128,17 @@ almost unaffected (7 of 625 rows) and the change is concentrated in one project 
 and shown as context ("this package took N days from its first advertisement"). Notebook 50 was therefore **not**
 re-run: its target did not change.
 
+**Run 3 of notebook 51 (with the rule, 2026-10-22) [M]:** 3,224 tenders · **re-bid or cancellation: 439 (13.6%)** =
+re-advertised under a new reference 391 · re-bid (wording 29, second IFB 4; 33 tenders) · cancellation 19 (1 tender is
+both re-bid and cancelled; no re-advertised tender also has re-bid wording). Rates: all tenders 13.6% (90% interval
+12.7–14.6%); works 15.9% (417 / 2,615), the other categories 4.4% or less. Time check from 2023-02-23: 646 test
+tenders, **11 positives**; Brier **0.032 hierarchical vs 0.039 global rate** (the grouped rates now beat one overall
+rate, 18% lower error). The test period's positive rate (1.7%) is far below training (16.6%): P157054's mass
+re-advertising happened in 2017–2022, so the rates are high for recent tenders and are read as history, not a
+forecast. Classifier: **AUC 0.46, not kept**. In this run's first pass it was marked "kept" because the gate compared
+Brier only (a model predicting "low" everywhere wins on Brier when the test period has few positives); the gate now
+also requires AUC ≥ 0.6. Nothing downstream used the classifier (the app uses the rates).
+
 ## 3. Extraction (notebook 55)
 
 Events must have **happened**: the prompt excludes conditions, plans and words inside project names, and a mechanical check rejects event quotes that are future or conditional ("will be subject to re-bidding", "sera relancé") or whose only re-bid word is a project name ("Projet de Relance…"); rejections are counted as `not_happened` (unit-tested with both real examples).

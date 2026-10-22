@@ -206,3 +206,16 @@ def validate(raw, chunk, kind):
                          project_id=chunk.get("project_id"), doc_type=chunk.get("doc_type"),
                          doc_date=chunk.get("doc_date")))
     return kept, rejected
+
+
+def match_contract(reference, project_refs):
+    """Contract key for an event's contract reference, or None. project_refs: {ref_key: contract_key} of the event's
+    project. The LLM writes references with extra words ("Contract HAMP-GD-02", "GYTJ201B, 205A and 305A"), so the
+    identifier-like codes inside the reference are matched exactly (a whole-string match found 0 of 1,042 events on
+    2026-10-22). Loan numbers and restructuring sequences simply find no contract."""
+    from src.entity_resolution import keys
+    from src.rag.keyword import identifiers
+    for code in identifiers(reference or "") + [keys.ref_key(reference) or ""]:
+        if len(code) >= 4 and code in project_refs:
+            return project_refs[code]
+    return None

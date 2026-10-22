@@ -128,3 +128,11 @@ def test_termination_trigger_ignores_resilience():
     assert lx.prefilter(_c("t", ISR, text="Le marché a été résilié en 2021."))["triggers"] == ["terminat"]
     assert lx.prefilter(_c("u", ISR, text="The contract was terminated in March."))["triggers"] == ["terminat"]
     assert lx.prefilter(_c("v", ISR, text="The determination of unit rates was slow.")) is None
+
+
+def test_event_reference_matched_by_the_code_inside_it():
+    refs = {"HAMPGD02": "C:1559038", "GYTJ201B": "C:1615168"}
+    assert lx.match_contract("Contract HAMP-GD-02", refs) == "C:1559038"
+    assert lx.match_contract("GYTJ201B, 205A, 305A, and 309A", refs) == "C:1615168"
+    assert lx.match_contract("IDA-59380-001", refs) is None              # a loan number, not a contract
+    assert lx.match_contract("three contracts in Bihar", refs) is None
