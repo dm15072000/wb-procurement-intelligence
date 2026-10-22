@@ -173,3 +173,18 @@ def test_quantile_pipeline_fits_with_unknown_categories_and_missing_values():
     assert (np.diff(out.values, axis=1) >= 0).all()          # ordered range
     works = m.predict(None, df[df.procurement_category == "Civil Works"].head(20)[du.CATEGORICAL + du.NUMERIC])
     assert 300 < works.p50.median() < 500
+
+
+# Real notice texts from the first full run of notebook 51 (2026-10-22), where 120 of 171 positives were false.
+@pytest.mark.parametrize("text,expected", [
+    ("Nom du Projet : Projet de Relance et de D&eacute;veloppement de la R&eacute;gion du Lac Tchad", None),
+    ("PROJET DE RELANCE ET DE DEVELOPPEMENT DE LA REGION DU LAC TCHAD", None),
+    ("Conditions Not awarded Lots within the REP will be subject to re-bidding. 2. The CDR now invites", None),
+    ("Bangui, le RELANCE Avis d'Appel d'Offres National Ouvert N° P", "RELANCE"),
+    ("phases III et IV du Projet PAAR en lots multiples (Relance).", "Relance"),
+    ("SUPPLY OF HIGHWAY PATROLLING VEHICLE (Rebid)", "Rebid"),
+    ("This is a re-tendering of Lot-1 and Lot-3 because their responses", "re-tender"),
+    ("Akkarai (km 22/300) to Mamallapuram (km56/700) - Second Call", "Second Call"),
+])
+def test_rebid_wording_skips_project_names_and_conditions(text, expected):
+    assert labels.mentions_rebid(text) == expected

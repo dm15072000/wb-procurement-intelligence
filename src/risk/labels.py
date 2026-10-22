@@ -34,10 +34,39 @@ MODIFICATION_PATTERNS = [
 _MODIFICATION = re.compile("|".join(MODIFICATION_PATTERNS), re.I)
 
 
+# Guards added 2026-10-22 after the first full run of notebook 51, where 120 of 171 positives were false:
+#  - a NAME, not an event: P161706 is the "Projet de Relance et de Developpement de la Region du Lac Tchad" (relance =
+#    recovery), so every one of its notices said "relance" (86 of 88 tenders labelled re-bid);
+#  - a CONDITION, not an event: P160223 (Lebanon) prints "Not awarded Lots ... will be subject to re-bidding" in every
+#    invitation (34 of 43 tenders).
+# A match is skipped when it is part of a project / programme name, or when the words just before it make it future or
+# conditional. Bare "relance" counts only next to a procurement word (avis, appel d'offres, DAO, consultation, ...).
+_NAME_BEFORE = re.compile(r"\b(projet|project|programme|program|plan)\s+(de|d'|of|for)?\s*(la\s+)?$", re.I)
+_CONDITIONAL_BEFORE = re.compile(r"\b(will|may|shall|could|would|might|to)\s+(be\s+)?(subject\s+to\s+)?(a\s+)?$|"
+                                 r"\bsubject\s+to\s+(a\s+)?$|\bif\b[^.]{0,60}$|\bin case\b[^.]{0,60}$", re.I)
+_PROCUREMENT_WORD = re.compile(r"avis|appel|offres|dao|consultation|march|lot|ifb|bid|n\s*[°o]", re.I)
+
+
+def _clean(text):
+    import html
+    t = html.unescape(re.sub(r"<[^>]+>", " ", text or ""))
+    return re.sub(r"\s+", " ", t)
+
+
 def mentions_rebid(text):
-    """The first re-bid phrase found in the text, or None."""
-    m = _REBID.search(text or "")
-    return m.group(0) if m else None
+    """The first re-bid phrase that reports an actual re-bid, or None (names and conditions are skipped)."""
+    t = _clean(text)
+    for m in _REBID.finditer(t):
+        before = t[max(0, m.start() - 60):m.start()]
+        if _NAME_BEFORE.search(before) or _CONDITIONAL_BEFORE.search(before):
+            continue
+        if m.group(0).lower().startswith("relance"):
+            around = t[max(0, m.start() - 40):m.end() + 40]
+            if not _PROCUREMENT_WORD.search(around.replace(m.group(0), " ")) or \
+                    re.match(r"\s+et\s+de\s+d[eé]veloppement", t[m.end():m.end() + 30], re.I):
+                continue
+        return m.group(0)
+    return None
 
 
 def is_modification(notice):
