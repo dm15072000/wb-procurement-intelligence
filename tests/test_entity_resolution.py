@@ -129,6 +129,20 @@ def test_individuals_with_same_name_but_different_ids_stay_separate():
     assert m[0]["supplier_key"] != m[1]["supplier_key"]
 
 
+def test_individuals_different_ids_never_chained_through_an_id_less_record():
+    # Regression (2026-10-21): an ID-less record listed FIRST used to anchor R2 and join two different IDs.
+    import itertools
+    ics = "Individual Consultant Selection"
+    rows = [("Rajesh Kumar", "IN", None, ics), ("RAJESH KUMAR", "IN", "11", ics), ("Rajesh Kumar", "IN", "22", ics)]
+    for perm in itertools.permutations(rows):
+        m, _ = resolve(_recs(*perm))
+        by_id = {r[2]: x["supplier_key"] for r, x in zip(perm, m)}
+        assert by_id["11"] != by_id["22"]
+    # With a single ID, the ID-less record with the same name still merges with it (unchanged behaviour).
+    m, _ = resolve(_recs(("Rajesh Kumar", "IN", None, ics), ("RAJESH KUMAR", "IN", "11", ics)))
+    assert m[0]["supplier_key"] == m[1]["supplier_key"]
+
+
 def test_r3_rejects_swapped_initials():
     # Sorted-token similarity alone would call these identical; in-order similarity must agree too.
     m, _ = resolve(_recs(("A M ENGINEERING", "BD", None, ""), ("M A ENGINEERING", "BD", None, "")))

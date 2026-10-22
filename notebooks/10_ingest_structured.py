@@ -32,7 +32,10 @@ import src.ingest.transform as tf
 importlib.reload(http); importlib.reload(tf)
 
 CATALOG = "procurement"
-RUN_TAG = "2026-10-21"   # one folder per ingestion run, so re-runs resume instead of mixing data
+# One folder per ingestion run, so re-runs resume instead of mixing data. Default = the checkpoint (c) run, so
+# running by hand reproduces it; the weekly refresh job passes its own date, so each refresh downloads fresh data.
+dbutils.widgets.text("run_tag", "2026-10-21")
+RUN_TAG = dbutils.widgets.get("run_tag").strip() or "2026-10-21"
 RAW = f"/Volumes/{CATALOG}/bronze/raw_files/structured/{RUN_TAG}"
 
 # Create all six schemas from CLAUDE.md (catalog + bronze + volume already exist, verified by notebook 01).

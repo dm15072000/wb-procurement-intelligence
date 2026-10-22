@@ -236,10 +236,14 @@ def resolve(records, stats=None):
     common = {k for k, idx in by_exact.items()
               if is_person_like(k[0]) and len({sid[i] for i in idx if sid[i]}) >= COMMON_NAME_MIN_IDS}
     for key, idx in by_exact.items():
+        # Individuals: when the same name carries 2+ different supplier_ids, those are different people, and an
+        # ID-less record with that name cannot be assigned to either. So nothing merges by name (R1 already joined
+        # same-ID records). Bug fixed 2026-10-21: before, an ID-less record that came FIRST became the anchor and
+        # chained two different IDs together (Spark's distinct() row order is arbitrary, so this could happen).
+        if key[2] and len({sid[i] for i in idx if sid[i]}) > 1:
+            continue
         for j in idx[1:]:
             a = idx[0]
-            if indiv[a] and sid[a] and sid[j] and sid[a] != sid[j]:
-                continue
             if key in common and not (sid[a] and sid[a] == sid[j]):
                 stats["R2_blocked_common_name"] += 1
                 continue
