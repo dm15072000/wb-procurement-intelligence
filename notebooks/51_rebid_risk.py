@@ -15,7 +15,8 @@
 # MAGIC **Why rates first, not a classifier:** H2 found re-bid signals are rare (9 of 3,643 IFB references had a second
 # MAGIC IFB). With few positives a classifier learns noise. So the default is a smoothed rate per group with its count
 # MAGIC and a 90% interval. A classifier is trained **only if there are at least 50 positives**, and kept only if it
-# MAGIC beats the rates on the time-based test set (Brier score). The gate is decided by the data and logged.
+# MAGIC beats the rates on the time-based test set (Brier score) **and** has AUC ≥ 0.6. The gate is decided by the data
+# MAGIC and logged.
 # MAGIC
 # MAGIC **Checkpoint (d) change 6:** IFB notices that only modify an earlier one (corrigendum, addendum, amendment,
 # MAGIC deadline extension, status "Revised") do not count as a second invitation. A sample of excluded notices is
@@ -39,6 +40,10 @@ import pandas as pd
 CATALOG = "procurement"
 S, G, ML = (f"{CATALOG}.{x}" for x in ("silver", "gold", "ml"))
 MIN_POSITIVES_FOR_CLASSIFIER = 50
+# Keep a classifier only if it beats the rates on Brier AND ranks tenders meaningfully better than chance. Brier alone
+# is not enough: when the test period has far fewer positives than training (1.7% vs 16.6% on 2026-10-22, because
+# P157054's re-advertisements were in 2017-2022), a model that predicts "low" for everything wins on Brier with AUC 0.46.
+MIN_AUC_TO_KEEP = 0.6
 report = {}
 
 # COMMAND ----------
@@ -229,8 +234,9 @@ if report["positives"] >= MIN_POSITIVES_FOR_CLASSIFIER and report["rates_check"]
                                                            categorical_features=[0, 1, 2], random_state=42))])
     clf.fit(tr[cats], tr[OUTCOME])
     p = clf.predict_proba(te[cats])[:, 1]
-    report["classifier"] = {"auc": float(roc_auc_score(te[OUTCOME], p)), "brier": float(brier_score_loss(te[OUTCOME], p)),
-                            "kept": float(brier_score_loss(te[OUTCOME], p)) < report["rates_check"]["brier_hierarchical"]}
+    auc, brier_clf = float(roc_auc_score(te[OUTCOME], p)), float(brier_score_loss(te[OUTCOME], p))
+    report["classifier"] = {"auc": auc, "brier": brier_clf, "min_auc_to_keep": MIN_AUC_TO_KEEP,
+                            "kept": brier_clf < report["rates_check"]["brier_hierarchical"] and auc >= MIN_AUC_TO_KEEP}
 else:
     report["classifier"] = {"trained": False, "reason": f"{report['positives']} positives < {MIN_POSITIVES_FOR_CLASSIFIER} "
                                                         "or none in the test period: rates only"}
