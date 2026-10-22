@@ -1,0 +1,153 @@
+{
+  "name": "procurement-weekly-refresh",
+  "schedule": {
+    "quartz_cron_expression": "0 0 3 ? * MON",
+    "timezone_id": "UTC",
+    "pause_status": "PAUSED"
+  },
+  "max_concurrent_runs": 1,
+  "email_notifications": {
+    "on_failure": []
+  },
+  "tasks": [
+    {
+      "task_key": "ingest_structured",
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/10_ingest_structured",
+        "base_parameters": {
+          "run_tag": "{{job.start_time.iso_date}}"
+        }
+      },
+      "timeout_seconds": 7200
+    },
+    {
+      "task_key": "silver",
+      "depends_on": [
+        {
+          "task_key": "ingest_structured"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/11_silver_structured"
+      }
+    },
+    {
+      "task_key": "documents",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/20_ingest_documents"
+      },
+      "timeout_seconds": 10800
+    },
+    {
+      "task_key": "suppliers",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/30_entity_resolution"
+      }
+    },
+    {
+      "task_key": "graph",
+      "depends_on": [
+        {
+          "task_key": "suppliers"
+        },
+        {
+          "task_key": "documents"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/40_build_graph"
+      }
+    },
+    {
+      "task_key": "duration_model",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/50_duration_model"
+      }
+    },
+    {
+      "task_key": "rebid_rates",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        },
+        {
+          "task_key": "documents"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/51_rebid_risk"
+      }
+    },
+    {
+      "task_key": "extract",
+      "depends_on": [
+        {
+          "task_key": "graph"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/55_extract_ratings_lessons_events"
+      }
+    },
+    {
+      "task_key": "embed_and_sync",
+      "depends_on": [
+        {
+          "task_key": "documents"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/60_embeddings_vector_index"
+      }
+    },
+    {
+      "task_key": "early_warnings",
+      "depends_on": [
+        {
+          "task_key": "duration_model"
+        },
+        {
+          "task_key": "rebid_rates"
+        },
+        {
+          "task_key": "extract"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/70_early_warnings"
+      }
+    },
+    {
+      "task_key": "rag_regression_eval",
+      "depends_on": [
+        {
+          "task_key": "embed_and_sync"
+        },
+        {
+          "task_key": "extract"
+        },
+        {
+          "task_key": "duration_model"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/61_rag_evaluation"
+      }
+    }
+  ]
+}

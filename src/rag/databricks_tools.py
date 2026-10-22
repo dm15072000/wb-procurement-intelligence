@@ -1,0 +1,201 @@
+"""Databricks implementations of the RAG tools (used by notebook 61 and by the app).
+
+Plain-language summary: src/rag/pipeline.py only knows "a function that searches", "a function that runs SQL", and
+so on. This file supplies the real ones on Databricks: SQL over Unity Catalog tables, the Foundation Model endpoints
+for embeddings and chat, Vector Search (or the cosine fallback), the registered duration model and the re-bid rates.
+The SQL runner is passed in, so the same code works with spark.sql in a notebook and with the SQL connector in the
+app. Values that end up inside SQL text (project IDs, contract keys) are validated against strict patterns first.
+"""
+import re
+from datetime import date
+
+from src.models import duration as du
+from src.rag import retrieval as rt
+
+CATALOG = "procurement"
+LLM_ENDPOINT = "databricks-meta-llama-3-3-70b-instruct"
+EMBED_ENDPOINT = "databricks-gte-large-en"
+VS_ENDPOINT = "procurement-vs"
+VS_INDEX = f"{CATALOG}.docs.chunk_index"
+DURATION_MODEL = f"models:/{CATALOG}.ml.tender_duration@champion"
+_PID = re.compile(r"^P\d{6}$")
+_CKEY = re.compile(r"^C:[A-Za-z0-9\-_/.]+$")
+_ISO3 = re.compile(r"^[A-Z]{3}$")
+
+
+def _in_list(values, pattern):
+    vals = [v for v in values if isinstance(v, str) and pattern.match(v)]
+    return ", ".join(f"'{v}'" for v in sorted(set(vals))) or "NULL"
+
+
+def _fmt_usd(x):
+    return f"USD {x:,.0f}" if x is not None else "amount not recorded"
+
+
+class DatabricksBackend:
+    """sql: callable(query, params) -> list[dict]. workspace_client: databricks.sdk.WorkspaceClient.
+    vs_index: a databricks.vector_search index object, or None to use the cosine fallback over fallback_rows
+    (rows of docs.chunk_embeddings with their embedding). duration_model: an mlflow pyfunc returning p20/p50/p80."""
+
+    def __init__(self, sql, workspace_client, vs_index=None, fallback_rows=None, duration_model=None,
+                 duration_model_info=None):
+        self.sql, self.w, self.vs_index = sql, workspace_client, vs_index
+        self.fallback_rows = fallback_rows
+        self.duration_model, self.duration_model_info = duration_model, duration_model_info or {}
+
+    # --- Foundation Model endpoints -------------------------------------------------------------------------------
+    def embed(self, text):
+        resp = self.w.serving_endpoints.query(name=EMBED_ENDPOINT, input=[text[:8000]])
+        return list(resp.data[0].embedding)
+
+    def chat(self, messages, max_tokens=1500):
+        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+        msgs = [ChatMessage(role=ChatMessageRole(m["role"]), content=m["content"]) for m in messages]
+        resp = self.w.serving_endpoints.query(name=LLM_ENDPOINT, messages=msgs, temperature=0.0, max_tokens=max_tokens)
+        return resp.choices[0].message.content
+
+    # --- retrieval ------------------------------------------------------------------------------------------------
+    def search(self, vec, filters, k):
+        if self.vs_index is not None:
+            res = self.vs_index.similarity_search(query_vector=vec, columns=rt.COLUMNS, filters=filters or None,
+                                                  num_results=k)
+            cols = [c["name"] for c in res["manifest"]["columns"]]
+            return [dict(zip(cols, row)) for row in res.get("result", {}).get("data_array", []) or []]
+        return rt.cosine_search(vec, self.fallback_rows or [], filters, k)
+
+    def describes_hits(self, contract_keys):
+        """Passages that a strong DESCRIBES link says mention one of these contracts. Score = link weight."""
+        if not contract_keys:
+            return []
+        rows = self.sql(f"""
+            SELECT e.weight AS score, e.evidence AS link_evidence, k.chunk_id, k.doc_id, k.project_id, k.country_iso3,
+                   k.doc_type, k.doc_date, k.section_path, k.text, k.title, k.pdf_url, k.page_start, k.chunk_type
+            FROM {CATALOG}.gold.edges e JOIN {CATALOG}.docs.chunk_embeddings k ON e.src_id = concat('chunk:', k.chunk_id)
+            WHERE e.edge_type = 'DESCRIBES'
+              AND e.dst_id IN ({_in_list(['contract:' + c for c in contract_keys if _CKEY.match(c)],
+                                         re.compile(r'^contract:C:[A-Za-z0-9\-_/.]+$'))})""", {})
+        return rows
+
+    # --- structured facts -----------------------------------------------------------------------------------------
+    def similar_contracts(self, pkg, limit=8):
+        """Past contracts in road projects: same category (and method if given), signed before as-of, value within
+        0.3-3x when a value is given; same country first, then nearest value. Each fact carries dataset + coverage."""
+        where = ["c.in_universe", "c.signing_date <= :as_of", "c.procurement_category = :category"]
+        params = {"as_of": str(pkg.get("as_of") or date.today()), "category": pkg.get("category") or ""}
+        if pkg.get("method"):
+            where.append("c.procurement_method = :method")
+            params["method"] = pkg["method"]
+        order = "CASE WHEN c.borrower_country_iso3 = :iso3 THEN 0 ELSE 1 END"
+        params["iso3"] = pkg.get("country_iso3") or ""
+        if pkg.get("amount_usd"):
+            where.append("c.total_amount_usd BETWEEN :lo AND :hi")
+            params.update(lo=0.3 * pkg["amount_usd"], hi=3 * pkg["amount_usd"], amt=float(pkg["amount_usd"]))
+            order += ", abs(log10(c.total_amount_usd) - log10(:amt))"
+        rows = self.sql(f"""
+            SELECT c.contract_key, c.project_id, c.description, c.signing_date, c.procurement_category,
+                   c.procurement_method, c.review_type, c.coverage_status, c.total_amount_usd,
+                   c.borrower_country_iso3, c.source_dataset, d.duration_days
+            FROM {CATALOG}.silver.contracts c
+            LEFT JOIN {CATALOG}.silver.tender_durations d ON c.contract_key = d.contract_key
+            WHERE {' AND '.join(where)}
+            ORDER BY {order}, c.signing_date DESC
+            LIMIT {int(limit)}""", params)
+        facts = []
+        for r in rows:
+            dur = f"; notice-to-signing {r['duration_days']} days" if r.get("duration_days") is not None else \
+                "; tender duration not matched"
+            facts.append({"kind": "similar_contract", "contract_key": r["contract_key"], "project_id": r["project_id"],
+                          "coverage_status": r["coverage_status"], "source_dataset": r["source_dataset"],
+                          "text": (f"Past contract {r['contract_key']} in project {r['project_id']} "
+                                   f"({r['borrower_country_iso3']}): {r['procurement_category']}, "
+                                   f"{r['procurement_method']}, {r['review_type']} review, "
+                                   f"{_fmt_usd(r['total_amount_usd'])}, signed {r['signing_date']}{dur}. "
+                                   f"Description: {(r['description'] or '')[:160]}. "
+                                   f"[source {r['source_dataset']}; coverage {r['coverage_status']}]")})
+        return facts
+
+    def _context(self, pkg):
+        """Project, country and governance data needed to build the duration-model features for a new package."""
+        iso3 = pkg.get("country_iso3") if _ISO3.match(pkg.get("country_iso3") or "") else None
+        project = {}
+        if pkg.get("project_id") and _PID.match(pkg["project_id"]):
+            rows = self.sql(f"SELECT board_approval_date, roads_pct, total_commitment_usd FROM {CATALOG}.silver.projects "
+                            f"WHERE project_id = :pid", {"pid": pkg["project_id"]})
+            project = rows[0] if rows else {}
+        lending = self.sql(f"SELECT lending_type FROM {CATALOG}.silver.countries WHERE iso3 = :iso3",
+                           {"iso3": iso3 or ""})
+        gov = self.sql(f"SELECT iso3, year, indicator, value FROM {CATALOG}.silver.governance WHERE iso3 = :iso3",
+                       {"iso3": iso3 or ""})
+        earlier = []
+        if project:
+            earlier = sorted(du.as_date(r["d"]) for r in self.sql(
+                f"""SELECT min(notice_date) AS d FROM {CATALOG}.silver.notices WHERE project_id = :pid
+                    AND notice_type IN ('Invitation for Bids', 'Request for Expression of Interest')
+                    AND tender_key IS NOT NULL GROUP BY tender_key""", {"pid": pkg["project_id"]}) if r["d"])
+        return iso3, project, (lending[0]["lending_type"] if lending else None), du.governance_lookup(gov), earlier
+
+    def predictions(self, pkg):
+        """Model facts: duration P20/P50/P80 and the re-bid rate. Numbers come from models, never from the LLM."""
+        facts = []
+        as_of = du.as_date(pkg.get("as_of") or date.today())
+        if self.duration_model is not None and pkg.get("category"):
+            import pandas as pd
+            iso3, project, lending, gov, earlier = self._context(pkg)
+            notice_type = "Request for Expression of Interest" if "consult" in pkg["category"].lower() \
+                else "Invitation for Bids"
+            row = du.feature_row({"contract_key": "new", "start_notice_date": as_of, "duration_days": None},
+                                 {"project_id": pkg.get("project_id"), "procurement_category": pkg["category"],
+                                  "procurement_method": pkg.get("method"), "borrower_country_iso3": iso3,
+                                  "total_amount_usd": pkg.get("amount_usd")},
+                                 project, notice_type, earlier, gov, lending)
+            pred = self.duration_model.predict(pd.DataFrame([row])[du.CATEGORICAL + du.NUMERIC]).iloc[0]
+            p20, p50, p80 = (int(round(pred[c])) for c in ("p20", "p50", "p80"))
+            info = self.duration_model_info
+            facts.append({"kind": "duration_model", "p20": p20, "p50": p50, "p80": p80,
+                          "text": (f"Duration model ({info.get('population', 'prior-review')} contracts, trained on "
+                                   f"{info.get('n_train', '?')} tenders, test MAE {info.get('mae_p50', '?')} days): "
+                                   f"predicted notice-to-signing time P20 {p20} days, P50 {p50} days, P80 {p80} days. "
+                                   f"Mainly valid for prior-review contracts.")})
+        rates = self.sql(f"""SELECT level, rate, positives, n, ci_low, ci_high FROM {CATALOG}.gold.rebid_rates
+                             WHERE (country_iso3 = :iso3 OR country_iso3 IS NULL)
+                               AND (procurement_category = :grp OR procurement_category IS NULL)
+                               AND (procurement_method = :method OR procurement_method IS NULL)
+                             ORDER BY depth DESC LIMIT 1""",
+                         {"iso3": pkg.get("country_iso3") or "", "grp": pkg.get("category") or "",
+                          "method": pkg.get("method") or ""})
+        if rates:
+            r = rates[0]
+            facts.append({"kind": "rebid_rate", "rate": r["rate"],
+                          "text": (f"Re-bid history: {r['positives']} of {r['n']} similar tenders were re-bid "
+                                   f"(smoothed rate {100 * r['rate']:.0f}%, 90% interval {100 * r['ci_low']:.0f}% to "
+                                   f"{100 * r['ci_high']:.0f}%; compared within {r['level']}).")})
+        return facts
+
+    def related_projects(self, pkg, facts):
+        """Slice projects that have documents: those of the similar contracts, plus the package country's."""
+        ids = [f["project_id"] for f in facts if f.get("project_id")]
+        rows = self.sql(f"""
+            SELECT DISTINCT d.project_id FROM {CATALOG}.docs.documents d
+            WHERE d.project_id IN ({_in_list(ids, _PID)})
+               OR d.project_id IN (SELECT project_id FROM {CATALOG}.silver.projects
+                                   WHERE in_slice AND array_contains(country_iso3_list, :iso3))""",
+                        {"iso3": pkg.get("country_iso3") or ""})
+        return [r["project_id"] for r in rows if r.get("project_id")]
+
+
+def fallback_rows_from(rows):
+    """Rows of docs.chunk_embeddings (as dicts) ready for the cosine fallback."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["embedding"] = [float(x) for x in r["embedding"]]
+        out.append(r)
+    return out
+
+
+def spark_sql_runner(spark):
+    """SQL runner for notebooks: spark.sql with named parameters (:name)."""
+    def run(query, params):
+        return [r.asDict() for r in spark.sql(query, args=params or None).collect()]
+    return run
+

@@ -74,7 +74,8 @@ gold.edges(src_id STRING, dst_id STRING,
 | `DESCRIBES` | Chunk → Contract | **strong** contract-to-lesson link (below): reference-number or supplier mention. Attached to the *chunk* because that is where the evidence (and the citation) sits; its section is one `HAS_CHUNK` hop up. |
 | `MAY_DESCRIBE` | Chunk → Contract | **weak** link, weight ≤ 0.45: ≥ 3 shared *rare* words (in ≤ 2% of the same project's chunks) with the contract description. Reported, but **not** used in RAG evaluation |
 | `IN_REGION` | Project → Region | regional projects whose World Bank code is a region (`3W`, `7C`, …), not a country |
-| `RATES` / `TEACHES` | Rating / Lesson → Project, Section | extraction (Stage 5) |
+| `RATES` / `TEACHES` | Rating / Lesson → Project | extraction (notebook 55): regex ratings; LLM lessons with verbatim-quote check |
+| `RATING_EVIDENCE` / `LESSON_EVIDENCE` | Rating / Lesson → Chunk | the passage the item was read from (one `HAS_CHUNK` hop to its section) |
 
 ### The contract-to-ICR-lesson link (assessment M1, worked example) [P]
 

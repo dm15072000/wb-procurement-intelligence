@@ -1,0 +1,6 @@
+# Databricks App definition (Streamlit). Deploy with the repo root as the app's source folder, so app/app.py can
+# import the tested code in src/. Setup and permissions: notebooks/80_app_setup.py.
+command: ["streamlit", "run", "app/app.py", "--server.headless", "true"]
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse        # app resource key: the SQL warehouse added in the App UI
