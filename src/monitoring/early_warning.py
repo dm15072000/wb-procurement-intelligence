@@ -25,7 +25,9 @@ def overdue_tenders(open_tenders, today):
         age = (_d(today) - _d(t["start_notice_date"])).days
         if age > t["p80_days"]:
             out.append({"flag": "tender_overdue", "key": t["tender_key"],
-                        "reason": f"open {age} days; 80% of similar tenders were signed within {round(t['p80_days'])} days",
+                        "reason": (f"check: no signed contract found after {age} days; 80% of similar tenders were "
+                                   f"signed within {round(t['p80_days'])} days (may also be a contract that did not "
+                                   f"match its notice)"),
                         "evidence": f"notice of {t['start_notice_date']}; duration model P80"})
     return out
 

@@ -230,6 +230,12 @@ overdue flags). Flags: **tender overdue 91**, **disbursement lag 16**; 38 active
 Backtest: only **3** projects have both a flag one year before the ICR and an ICR outcome (1 bad outcome): too few to
 read anything. Amendment indicator vs LLM-extracted events: Spearman **−0.08** (no relation; descriptive).
 
+**What this means for use (stated in the app and the proposal):** the **amendment score is a heuristic only**: it does
+not track the amendment, extension and overrun events extracted from the reports (r ≈ −0.08), so it is shown as a
+checklist of risk factors, never as a risk estimate. **Overdue flags mean "check", not "late"**: a tender with no
+matched contract past the model's P80 may be genuinely stuck, or its contract may simply not have joined to the notice
+(about one third of contracts match a notice), so each flag is a prompt to look, with its evidence shown.
+
 ## 6. App setup (notebook 80)
 
 1 of 3 Free Edition apps used (`wbintelligence2`, stopped): there is room, nothing needs stopping or deleting. Grants

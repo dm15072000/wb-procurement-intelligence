@@ -220,7 +220,8 @@ def plan_screen():
                   "latest_isr_min_score": min(latest.values()) if latest else None,
                   "n_earlier_amendment_events": ev[0]["n"] if ev else None})
     m3.metric("Amendment indicator (heuristic)", f"{s['score']} / {s['max_known']}")
-    m3.caption("Not a probability. " + "; ".join(f["reason"] for f in s["factors"]) +
+    m3.caption("Heuristic only, not a probability: it did not track the amendment events extracted from reports "
+               "(Spearman r = -0.08, notebook 70). " + "; ".join(f["reason"] for f in s["factors"]) +
                (f" Unknown: {', '.join(s['unknown'])}." if s["unknown"] else ""))
     st.subheader("Similar past contracts")
     sims = [f for f in facts if f.get("kind") == "similar_contract"]
@@ -245,6 +246,8 @@ def monitor_screen():
     pid = p["project_id"]
     flags = run_sql(f"SELECT flag, reason, evidence FROM {CATALOG}.gold.early_warnings WHERE project_id = :p", {"p": pid})
     st.subheader("Early-warning flags")
+    st.caption("A flag means CHECK, not LATE: an overdue tender may also be a contract that did not match its notice "
+               "(about a third of contracts match a notice).")
     st.dataframe(pd.DataFrame(flags), hide_index=True, use_container_width=True) if flags else st.caption("No flags.")
     st.subheader("Ratings over time (ISR → ICR → IEG)")
     rat = run_sql(f"""SELECT doc_date, doc_type, dimension, value, matched FROM {CATALOG}.gold.ratings

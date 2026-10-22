@@ -18,7 +18,7 @@ disbursements, notices), **how it was executed** (ISRs, procurement plans, notic
 |---|---|---|
 | Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid or cancellation rate of similar tenders, similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
 | Tender design & packaging | past scopes and qualification criteria from indexed REOI / IFB notices; lessons on packaging, specifications and market capacity | procurement-notice text, PAD procurement sections, ICR lessons (public SBDs/ToRs are scarce, stated) |
-| Execution & monitoring | early-warning flags with reasons: overdue tenders, disbursement lag, weak ISR ratings, reported problems | duration model, disbursement snapshots, extracted ratings and events |
+| Execution & monitoring | early-warning flags with reasons: overdue tenders, disbursement lag, weak ISR ratings, reported problems (a flag means "check", not "late") | duration model, disbursement snapshots, extracted ratings and events |
 | Continuous learning | new ISRs/ICRs become searchable, rated and mined for lessons each week; models retrain under a promotion rule | one Databricks Job, incremental at every step |
 
 Everything runs inside one Databricks workspace: Delta Lake + Unity Catalog, Foundation Model APIs (Llama 3.3 70B,
@@ -163,7 +163,9 @@ real workload.
 No public dataset records amendments [V], so a supervised probability cannot be validated on public data. Instead:
 (1) LLM-extracted amendment, extension and overrun **events** from ISR/ICR text, each with a verbatim quote; (2) a
 transparent **indicator score** (large works, high value, long predicted duration, weak governance, weak ISR rating,
-earlier amendments), labelled "heuristic, not a probability", with every factor and unknown shown. Full-scale path:
+earlier amendments), labelled "heuristic, not a probability", with every factor and unknown shown. **Measured: the
+score does not track the amendment events extracted from reports (Spearman r ≈ −0.08, notebook 70), so it is a
+heuristic checklist only, never a risk estimate.** Full-scale path:
 STEP amendment records (internal), or the same extraction over all ~8,000 ICRs to create labels.
 
 ### 4.4 Agentic RAG
