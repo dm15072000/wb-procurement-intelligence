@@ -96,4 +96,5 @@ else:
 
 # COMMAND ----------
 
+import json
 dbutils.notebook.exit(json.dumps(dict(apps_summary, grants_applied=bool(APP_SP)), default=str))
