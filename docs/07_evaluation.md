@@ -91,8 +91,42 @@ to the "same reference, second IFB" rule and usually carry no re-bid word. Count
 description (≥ 25 characters) is advertised again ≥ 30 days later in the same project: **378 tenders in 22 projects,
 375 not labelled**. Most are Madhya Pradesh rural-road packages (P157054), e.g. "MP04WB-03: Upgradation and
 resurfacing of 14 Gravel Roads in Bhind District", advertised 7 times (May 2017 – Jun 2020) and never awarded. The
-label's recall is therefore low; adding a "same package re-advertised" rule is proposed, not done (it changes the label
-from about 51 to several hundred positives, so it needs a precision sample first).
+label's recall was therefore low. **Fixed by the rule below.**
+
+**Re-advertisement under a new reference: `re_advertised_new_ref` (added 2026-10-22, `src/risk/readvertise.py`) [M].**
+Rule: same project; package descriptions identical after normalising (case, punctuation, spacing: "MP04WB - 03" =
+"MP04 WB-03") or ≥ 0.95 similar with the same distinctive words, and the **same numbers in the same order**; at least
+25 characters and 3 non-generic words; the earlier tender has **no matched contract** and the later one starts **≥ 30
+days** after it; identical descriptions started < 30 days apart are parallel lots and skipped. The earlier attempt is
+flagged, reported separately from wording-based re-bids, and counted in "re-bid or cancellation".
+
+On the 3,224 tenders of run 2: 3,079 eligible (145 too short or generic) · **324 chains (721 rounds), 211 ending in a
+signed contract** · 4 parallel-lot groups skipped · 6 earlier rounds already had a contract (not flagged) · **391
+tenders flagged**, only 3 of which were already labelled by wording / plan / second IFB. Concentrated: **345 of 391 in
+P157054** (Madhya Pradesh rural roads; whole batches were re-advertised on the same days, e.g. 26–28 Sep 2017, 12 Mar
+2019, 4 Sep 2019), 13 in P144726, the rest in 16 projects.
+
+**Precision [M, hand-checked]:** random sample of 30 flags (seed 30): **29 correct (97%)**. The one wrong pair was
+"Tender 4 … Lot 5" vs "Tender 5 … Lot 4" (P170267), matched because numbers were compared as an unordered set; fixed
+(numbers must match in order), after which it links to its true successor ("Tender 4 … Lot 5" re-issued May 2024).
+Because P157054 dominates a random sample, **all 44 flags outside P157054 were also checked: 44 correct**; 24 of them
+carry a re-advertisement suffix in the new reference ("R", "RE", "A", "R1", "RE1", "1"). A unit test then exposed
+spacing variants of the same code ("MP04WB" vs "MP04 WB"); comparing without spaces added 74 flags (72 in P157054);
+**10 of 10 sampled were correct**. Accepted: precision ≥ 95% by every check; recall is not measured (descriptions
+that were reworded between rounds are still missed).
+
+**Durations from the first notice of a chain [M] (`gold.tender_durations_chain`, original kept):** **206 of 3,202**
+durations belong to a round that had earlier failed rounds: **199 post-review, 7 prior-review**. Counting from the
+first notice adds a median of **136 days** (quartiles 89 / 136 / 176; range 52–1,413); medians move from 85 → 219
+days (post) and 251 → 630 days (prior); 3 would exceed the 3-year limit.
+
+**Which duration the model uses: the original (per round).** (1) It answers the question the planner asks at the
+start notice ("once advertised, how long until signing?"), with one clear definition and no dependence on a fuzzy
+match; (2) the risk that a package must be re-advertised is already a separate, measured output (the "re-bid or
+cancellation" rate), so adding it into the duration target would count it twice; (3) the main prior-review model is
+almost unaffected (7 of 625 rows) and the change is concentrated in one project (P157054). The chain duration is kept
+and shown as context ("this package took N days from its first advertisement"). Notebook 50 was therefore **not**
+re-run: its target did not change.
 
 ## 3. Extraction (notebook 55)
 

@@ -30,8 +30,9 @@ from collections import Counter, defaultdict
 sys.path.append(os.path.abspath(".."))
 import importlib
 import src.risk.labels as lb
+import src.risk.readvertise as rv
 import src.models.duration as du
-for m in (lb, du):
+for m in (lb, rv, du):
     importlib.reload(m)
 import pandas as pd
 
@@ -78,9 +79,28 @@ for tk, ns in notices.items():
                     "notice_method_code": first["procurement_method_code"],
                     "contract_category": c["procurement_category"] if c else None,
                     "contract_method": c["procurement_method"] if c else None,
+                    "description": first.get("bid_description"), "has_contract": c is not None,
                     "rebid": lab["rebid"], "cancellation": lab["cancellation"],
                     "rebid_or_cancellation": lab["rebid_or_cancellation"], "reasons": lab["reasons"]})
 report["tenders"] = len(tenders)
+
+# Same package re-advertised under a NEW reference (user decision 2026-10-22, src/risk/readvertise.py): the earlier
+# attempt (no contract) is flagged re_advertised_new_ref, reported separately and counted in "re-bid or cancellation".
+# Measured precision before this run: 29 of 30 random flags correct (the wrong one led to the "numbers in order" fix)
+# and 44 of 44 outside P157054; 10 of 10 flags added by the spacing fix ("MP04WB-03" = "MP04 WB-03") correct.
+readv_flags, readv_chains, report["readvertisement"] = rv.find_chains(
+    [{"tender_key": t["tender_key"], "project_id": t["project_id"], "start_date": t["start_date"],
+      "description": t["description"], "has_contract": t["has_contract"]} for t in tenders])
+for t in tenders:
+    f = readv_flags.get(t["tender_key"])
+    t["re_advertised_new_ref"] = bool(f)
+    if f:
+        t["reasons"].append(f"readvertised:{f['later_tender_key'].split(':', 1)[1]}")
+        t["rebid_or_cancellation"] = True
+spark.createDataFrame([(f"{g[0]['tender_key']}", i, t["tender_key"], t["start_date"], t["has_contract"], t["description"])
+                       for g in readv_chains for i, t in enumerate(g)],
+                      "chain_first_tender_key string, round int, tender_key string, start_date date, has_contract boolean, "
+                      "description string")      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{G}.readvertisement_chains")
 # Checkpoint d change 6: corrigendum / amendment / extension / revised IFB notices modify an invitation, they are not a
 # second round of bidding, so they never count toward "more than one IFB". How many were set aside:
 all_ifbs = [n for ns in notices.values() for n in ns if n["notice_type"] == "Invitation for Bids"]
@@ -90,6 +110,9 @@ report["ifb_notices"] = len(all_ifbs)
 OUTCOME = "rebid_or_cancellation"
 report["positives"] = sum(t[OUTCOME] for t in tenders)
 report["positives_by_outcome"] = {"rebid": sum(t["rebid"] for t in tenders),
+                                  "re_advertised_new_ref": sum(t["re_advertised_new_ref"] for t in tenders),
+                                  "re_advertised_and_rebid_wording": sum(t["re_advertised_new_ref"] and t["rebid"]
+                                                                         for t in tenders),
                                   "cancellation": sum(t["cancellation"] for t in tenders),
                                   "both": sum(t["rebid"] and t["cancellation"] for t in tenders),
                                   "rebid_or_cancellation": report["positives"]}
@@ -154,6 +177,36 @@ spark.createDataFrame(rows, "level string, depth int, country_iso3 string, procu
                       "procurement_method string, rate double, positives int, n int, ci_low double, ci_high double") \
      .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{G}.rebid_rates")
 print(json.dumps(report["rates_check"], indent=2))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3b. Durations from the FIRST notice of a re-advertisement chain (kept next to the original)
+# MAGIC For packages advertised several times under new references that end in a signed contract, the time from the
+# MAGIC first notice of the chain to signing. The original duration (from the notice of the round that got the contract)
+# MAGIC is NOT changed: both are saved in `gold.tender_durations_chain`. The duration model keeps the original as its
+# MAGIC target (decision 2026-10-22, docs/07 §1): the chain time is reported as context, and the risk of having to
+# MAGIC re-advertise is carried by the "re-bid or cancellation" rate.
+
+# COMMAND ----------
+
+from collections import defaultdict as _dd
+dur_by_tender = _dd(list)
+for r in spark.table(f"{S}.tender_durations").collect():
+    dur_by_tender[r.tender_key].append(r.asDict())
+chain_rows = rv.chain_durations(readv_chains, dur_by_tender)
+if chain_rows:
+    spark.createDataFrame(pd.DataFrame(chain_rows).astype({"first_notice_date": "datetime64[ns]",
+                                                           "start_notice_date": "datetime64[ns]",
+                                                           "signing_date": "datetime64[ns]"}))          .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{G}.tender_durations_chain")
+added = sorted(r["added_days"] for r in chain_rows)
+q = lambda p: added[min(len(added) - 1, int(p * len(added)))] if added else None
+report["chain_durations"] = {
+    "durations_total": sum(len(v) for v in dur_by_tender.values()), "durations_with_earlier_rounds": len(chain_rows),
+    "by_review_type": dict(Counter(r["review_type"] for r in chain_rows)),
+    "added_days_p25_p50_p75_max": [q(0.25), q(0.5), q(0.75), added[-1] if added else None],
+    "over_3_years_from_first_notice": sum(r["duration_days_from_first_notice"] > 1095 for r in chain_rows)}
+print(json.dumps(report["chain_durations"], indent=2))
 
 # COMMAND ----------
 
