@@ -194,3 +194,12 @@ def test_quantile_pipeline_fits_with_unknown_categories_and_missing_values():
 ])
 def test_rebid_wording_skips_project_names_and_conditions(text, expected):
     assert labels.mentions_rebid(text) == expected
+
+
+def test_feature_row_accepts_timestamps_and_dates():
+    from datetime import datetime
+    d = {"contract_key": "C:1", "start_notice_date": datetime(2021, 3, 1, 0, 0), "duration_days": None}
+    row = du.feature_row(d, {"procurement_category": "Works"}, {"board_approval_date": date(2020, 1, 1)},
+                         "Invitation for Bids", [datetime(2020, 6, 1), datetime(2022, 1, 1)], {}, "IDA")
+    assert row["project_age_days"] == (date(2021, 3, 1) - date(2020, 1, 1)).days and row["n_earlier_tenders"] == 1
+    assert du.as_date(datetime(2021, 3, 1, 12, 0)) == date(2021, 3, 1)

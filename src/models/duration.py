@@ -62,7 +62,7 @@ def count_earlier(sorted_dates, t):
     lo, hi = 0, len(sorted_dates)
     while lo < hi:
         mid = (lo + hi) // 2
-        if sorted_dates[mid] < t:
+        if as_date(sorted_dates[mid]) < t:
             lo = mid + 1
         else:
             hi = mid
@@ -73,9 +73,9 @@ def feature_row(duration, contract, project, start_notice_type, earlier_tender_d
     """One model row. duration: silver.tender_durations row; contract: silver.contracts row; project:
     silver.projects row; earlier_tender_dates: sorted start-notice dates of the project's tenders (any tender);
     lending_type: current IDA/IBRD/Blend of the borrower country. Everything is as of the start notice date t."""
-    t = duration["start_notice_date"]
+    t = as_date(duration["start_notice_date"])
     iso3 = contract.get("borrower_country_iso3")
-    approval = project.get("board_approval_date")
+    approval = as_date(project["board_approval_date"]) if project.get("board_approval_date") else None
     row = {
         "contract_key": duration["contract_key"],
         "start_notice_date": t,
@@ -220,5 +220,10 @@ def days_to_text(p20, p50, p80):
 
 
 def as_date(x):
-    """Accept a date or 'YYYY-MM-DD' string (Spark rows give dates; JSON gives strings)."""
+    """Accept a date, a timestamp or a 'YYYY-MM-DD' string (Spark rows give dates or timestamps; JSON gives strings).
+    A timestamp is reduced to its date: datetime is a subclass of date, and mixing the two in arithmetic fails
+    (notebook 70, 2026-10-22: gold.rebid_labels.start_date is a timestamp)."""
+    from datetime import datetime
+    if isinstance(x, datetime):
+        return x.date()
     return x if isinstance(x, date) else date.fromisoformat(str(x)[:10])
