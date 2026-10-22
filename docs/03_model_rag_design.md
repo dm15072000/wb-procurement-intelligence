@@ -315,11 +315,12 @@ Embeddings: `databricks-gte-large-en` (1,024 dimensions). Both verified READY on
 
 | Notebook | Rule | Estimate before running [A] |
 |---|---|---|
-| 55 extraction | Dry run first (exact count printed, no call). If the full scope is **> 2,000 calls**, use the limited scope automatically: **ICR + ICR Review + latest 3 ISRs per project**. Batches of 100, results and log saved after each batch; re-runs skip chunks already logged with the same `text_hash`; failed rows retried; re-processing is idempotent | full scope ≈ 800–1,350 calls (≈ 700–1,250 events + 70–100 lessons), so probably **under** the budget; limited scope would be ≈ 650–900 |
+| 55 extraction (rule of 2026-10-22, **replaces** the earlier "> 2,000 calls → latest 3 ISRs" limit) | **All documents** of the reporting types are kept (ICR, ICR Review, PPAR, every ISR, Project Papers, PADs; not Procurement Plans or CPFs); repeat copies skipped. A passage is sent only if its **section** is relevant (procurement, implementation, lessons, key issues, risks) or its **text** has a trigger word (rebid, re-tender, cancel, amend, variation order, delay, extension of time, terminat, lesson), English + French, accents and "œ" folded. **One call per passage** returns lessons and events together. Dry run prints total chunks, chunks after the filter and calls; section 3 refuses to start until `APPROVED_CALLS` is set. Batches of 100, saved after each; re-runs skip logged chunks with the same `text_hash`; failed rows retried; idempotent. Ratings stay regex-only | ≈ 2,000–3,200 calls: the "implementation" section and the "delay" trigger are broad and every ISR is kept. Exact number: notebook 55 section 2 |
 | 61 evaluation | Questions are generated once and frozen | first run ≈ 140–235 chat calls (35–70 question writing, 62–124 answer + verifier, 1–2 injection, ≤ 40 judge) + ~65 query embeddings; later runs ≈ 105–165 |
 
-The estimates come from the document mix (≈ 222 ISRs, 16 ICRs, ≈ 12 ICR Reviews in 299 documents, 5,226 chunks) and
-assumed keyword hit rates of 20–45%. They are not measurements: notebook 55's dry-run cell gives the real number.
+The estimates come from the document mix (≈ 222 ISRs, 16 ICRs, ≈ 12 ICR Reviews, ≈ 16 PADs in 299 documents, 5,226
+chunks [M]) and assumed pass rates (most ISR passages sit in "implementation", "key issues" or "risks" sections; about
+half of PAD / ICR passages pass). They are not measurements: notebook 55's dry-run cell gives the exact number.
 
 ## 10. Approval record (checkpoint d)
 
