@@ -74,7 +74,15 @@ pulled on 2026-10-22 (DS00005 7,290 rows · DS04691 2,625 · DS01004 6,589); cou
 | Community-Driven Development | other | "Community Driven Development" (– / 73 / –) |
 | Non-Profit Organizations | other | "Non-Profit Organizations" (1 / 3 / –) |
 | Service Delivery Contracts | other | "Service Delivery Contracts" (– / – / 6) |
+| Commercial Practices | other | "Commercial Practices" (222 contracts: Goods 153, Non-consulting 41, Consultant 28); "Comercial Practices" (1, misspelt in the source) |
+| Public-Private Partnership | other | "Public Private Partnership" (6, Works) |
+| Procurement Agents | other | "Procurement Agents" (1) |
+| Imports | other | "Imports" (1) |
+| Alternative Procurement Arrangement | other | "Alternative Procurement Arrangement" (1) |
 | unknown | unknown | empty / null |
+
+The last five rows were found by the full-data run of notebook 11 (2026-10-22, contract counts): 233 of 491,020
+contracts used a spelling not in the transport extract. They were added to the map; no other unmapped value exists.
 
 Effect on the 16 demo projects [M]: 2,092 contracts, 0 unmapped. The map is also written to `ops.standard_value_map`.
 Side effect found and fixed: the amendment score's "large civil works" factor tested for a category starting with
@@ -106,6 +114,10 @@ price once per member is counted once.
   row = 1.06× and 0.87× the price). They are listed in `ops.joint_award_check`, not corrected.
 - DS01004 amounts are in USD (contract 1537291: USD 1,168,104 vs notice INR 78,190,320, about 67 INR/USD, right for
   2015). A joint venture is one row with a combined name ("... IN JV WITH ..."); `is_joint_award` also uses that rule.
+
+**Full data (notebook 11, 2026-10-22) [M]:** multi-supplier contracts summed as shares: DS00005 **8,864** of 282,890
+(3.1%), DS04691 **1,838** of 61,328 (3.0%); DS01004 **0** of 146,802 (every contract is one row). All other notebook 11
+figures were unchanged from checkpoint (c).
 
 **Rule (`AMOUNT_BASIS` in `src/ingest/transform.py`):** STEP total = sum of member shares; DS01004 total = its single
 row. Defensive: if DS01004 ever lists a contract on several rows with the same amount, it is counted once and split

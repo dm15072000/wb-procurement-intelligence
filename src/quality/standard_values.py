@@ -50,6 +50,13 @@ METHOD_MAP = {
     "community driven development": ("Community-Driven Development", "other", None),
     "non-profit organizations": ("Non-Profit Organizations", "other", None),
     "service delivery contracts": ("Service Delivery Contracts", "other", None),
+    # Seen only in the full-data run of notebook 11 (2026-10-22), outside the transport extract: 233 contracts.
+    "commercial practices": ("Commercial Practices", "other", None),
+    "comercial practices": ("Commercial Practices", "other", None),      # misspelling in the source (1 contract)
+    "public private partnership": ("Public-Private Partnership", "other", None),
+    "procurement agents": ("Procurement Agents", "other", None),
+    "imports": ("Imports", "other", None),
+    "alternative procurement arrangement": ("Alternative Procurement Arrangement", "other", None),
 }
 
 

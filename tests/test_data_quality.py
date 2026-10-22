@@ -106,6 +106,16 @@ def test_method_map(raw, std, family, market):
     assert (m["method"], m["family"], m["market"], m["mapped"]) == (std, family, market, True)
 
 
+@pytest.mark.parametrize("raw,std", [("Commercial Practices", "Commercial Practices"),
+                                     ("Comercial Practices", "Commercial Practices"),
+                                     ("Public Private Partnership", "Public-Private Partnership"),
+                                     ("Procurement Agents", "Procurement Agents"), ("Imports", "Imports"),
+                                     ("Alternative Procurement Arrangement", "Alternative Procurement Arrangement")])
+def test_spellings_found_by_the_full_data_run_are_mapped(raw, std):
+    m = sv.method(raw)
+    assert m["mapped"] and m["method"] == std and m["family"] == "other"
+
+
 def test_unknown_spelling_is_flagged_not_guessed_and_missing_is_unknown():
     assert sv.method("Some New Method") == {"method": "other", "family": "other", "market": None, "mapped": False}
     assert sv.category(None) == ("unknown", True)
