@@ -57,7 +57,9 @@ if spark.catalog.tableExists(f"{S}.contract_events"):
 # MAGIC %md
 # MAGIC ## 1. Open tenders and their predicted P80
 # MAGIC An open tender = an Invitation for Bids / REOI with no matched contract and no cancelled notice, in an active
-# MAGIC universe project. Caveat (stated in the app): the model is trained on prior-review contracts, and an unmatched
+# MAGIC universe project, that was **not superseded by a re-advertisement** (`re_advertised_new_ref`) and started **within
+# MAGIC the last 3 years** (the duration rule's cap). Without these two conditions (2026-10-22 run) 329 of 376 "open"
+# MAGIC tenders were flagged overdue, mostly superseded rounds and old notices whose contract simply did not join. Caveat (stated in the app): the model is trained on prior-review contracts, and an unmatched
 # MAGIC notice can also be a join failure, so this flag means "check this tender", not "this tender is late".
 
 # COMMAND ----------
@@ -65,11 +67,17 @@ if spark.catalog.tableExists(f"{S}.contract_events"):
 open_tenders = []
 if model is not None:
     rows = spark.sql(f"""
-      SELECT l.tender_key, l.project_id, l.start_date, l.procurement_category, l.procurement_method
+      SELECT l.tender_key, l.project_id, l.start_date, l.procurement_category, l.procurement_method,
+             l.re_advertised_new_ref
       FROM {G}.rebid_labels l JOIN {S}.projects p ON l.project_id = p.project_id
       WHERE p.in_universe AND p.status = 'Active' AND NOT array_contains(split(l.reasons, '; '), 'notice_cancelled')
         AND l.tender_key NOT IN (SELECT concat(project_id, ':', ref_key) FROM {S}.contracts WHERE ref_key IS NOT NULL)
     """).collect()
+    # Not open: rounds superseded by a re-advertisement, and notices older than 3 years with no contract found.
+    report["excluded_superseded_by_readvertisement"] = sum(bool(r.re_advertised_new_ref) for r in rows)
+    report["excluded_older_than_3_years"] = sum(1 for r in rows if not r.re_advertised_new_ref
+                                                and (TODAY - du.as_date(r.start_date)).days > 1095)
+    rows = [r for r in rows if not r.re_advertised_new_ref and (TODAY - du.as_date(r.start_date)).days <= 1095]
     starts = defaultdict(list)
     for r in spark.sql(f"SELECT project_id, start_date FROM {G}.rebid_labels").collect():
         starts[r.project_id].append(r.start_date)
