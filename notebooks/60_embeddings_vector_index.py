@@ -21,7 +21,14 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-vectorsearch --quiet
+# MAGIC %md
+# MAGIC The client is **pinned** (2026-10-22): an unpinned install pulled a version that downgraded protobuf
+# MAGIC 6.33.5 → 5.29.6, and the Python kernel of serverless environment 6 then failed to start. Version 0.66
+# MAGIC accepts the runtime's protobuf 6.
+
+# COMMAND ----------
+
+# MAGIC %pip install "databricks-vectorsearch==0.66" "protobuf>=6.33.5,<7" --quiet
 
 # COMMAND ----------
 

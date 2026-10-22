@@ -3,7 +3,7 @@
 streamlit>=1.37
 databricks-sdk
 databricks-sql-connector>=3.0
-databricks-vectorsearch
+databricks-vectorsearch==0.66
 mlflow
 scikit-learn
 scipy
