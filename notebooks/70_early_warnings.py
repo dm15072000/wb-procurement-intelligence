@@ -196,3 +196,12 @@ if len(bt_df):
     report["backtest"] = {"projects": len(bt_df), "bad_outcomes": int(bt_df.bad_outcome.sum()),
                           "crosstab_any_flag_vs_bad_outcome": pd.crosstab(bt_df.any_flag, bt_df.bad_outcome).to_dict()}
 print(json.dumps(report, indent=2, default=str))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Return the summary, so a job run's result can be read without opening the notebook.
+
+# COMMAND ----------
+
+dbutils.notebook.exit(json.dumps(report, default=str))

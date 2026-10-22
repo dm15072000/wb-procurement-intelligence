@@ -46,6 +46,8 @@ if len(apps) >= APPS_LIMIT:
 else:
     print(f"\n{len(apps)} of {APPS_LIMIT} apps used: there is room; no need to stop or delete 'wbintelligence2'.")
 print("Reminder: apps stop automatically after 24 hours; start the app again shortly before the demo.")
+apps_summary = {"apps_used": len(apps), "limit": APPS_LIMIT,
+                "apps": {a.name: str(getattr(getattr(a, "compute_status", None), "state", None)) for a in apps}}
 
 # COMMAND ----------
 
@@ -86,3 +88,12 @@ else:
 # MAGIC    `src/`). Set scikit-learn in `requirements.txt` to the version notebook 50 printed.
 # MAGIC 5. Run the grants cell above with the app's service principal ID.
 # MAGIC 6. Open the app. "Data coverage" shows whether Vector Search or the fallback is in use.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Return the summary (apps used, grants applied or not), so a job run's result can be read without the notebook.
+
+# COMMAND ----------
+
+dbutils.notebook.exit(json.dumps(dict(apps_summary, grants_applied=bool(APP_SP)), default=str))
