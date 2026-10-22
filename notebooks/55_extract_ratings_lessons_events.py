@@ -178,7 +178,9 @@ if dbutils.widgets.get("mode") == "dry_run":
 
 # COMMAND ----------
 
-APPROVED_CALLS = 0   # <- copy "LLM CALLS THIS RUN" from section 2 here once you are happy with it
+# The approved number comes from the `approved_calls` widget / job parameter (default 0 = nothing approved).
+dbutils.widgets.text("approved_calls", "0")
+APPROVED_CALLS = int(dbutils.widgets.get("approved_calls") or 0)   # e.g. 1548, approved by the user 2026-10-22
 assert len(todo) <= APPROVED_CALLS, (f"{len(todo)} LLM calls planned but APPROVED_CALLS = {APPROVED_CALLS}: "
                                      "check the section 2 counts, then set APPROVED_CALLS")
 
@@ -252,13 +254,22 @@ def run_batch(batch):
 by_id = {c["chunk_id"]: c for c in chunks}
 totals = Counter()
 n_batches = -(-len(todo) // BATCH_SIZE)
+stopped_early = None
 for i, batch in enumerate(lx.batches(todo, BATCH_SIZE), 1):
     res = run_batch(batch)
     totals.update({k: v for k, v in res.items() if k != "rejected"})
     totals.update({f"rejected_{k}": v for k, v in res["rejected"].items()})
     print(f"batch {i}/{n_batches}: {res['calls']} calls, {res['errors']} errors, {res['lessons']} lessons, "
           f"{res['events']} events kept (saved)")
-report["llm"] = {"calls_this_run": totals["calls"], "errors_retry_next_run": totals["errors"],
+    # ai_query with failOnError => false returns an error per row instead of failing (e.g. when the token quota or
+    # rate limit is hit). A batch where EVERY call failed means the endpoint is unavailable: stop, keep what is saved,
+    # and resume later (failed rows were not logged, so they are retried).
+    if res["calls"] and res["errors"] == res["calls"]:
+        stopped_early = f"batch {i}: all {res['calls']} calls failed (quota / endpoint unavailable); resume later"
+        print("STOPPING EARLY:", stopped_early)
+        break
+report["llm"] = {"stopped_early": stopped_early, "batches_run": i if todo else 0, "batches_planned": n_batches,
+                 "calls_this_run": totals["calls"], "errors_retry_next_run": totals["errors"],
                  "lessons_kept": totals["lessons"], "events_kept": totals["events"],
                  "events_matched_to_contract": totals["matched"],
                  "items_rejected": {k[9:]: v for k, v in totals.items() if k.startswith("rejected_")}}
@@ -314,3 +325,14 @@ for e in spark.table(f"{S}.contract_events").orderBy(F.rand(3)).limit(20).collec
     print(f"[{e.event_type}] {e.doc_type[:12]} {e.doc_date} ref={e.contract_reference} -> {e.matched_contract_key}\n"
           f"    QUOTE: {e.quote[:200]}\n")
 print(json.dumps(report, indent=2, default=str))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Save this run's summary (so a job run's result can be read without opening the notebook) and return it.
+
+# COMMAND ----------
+
+spark.createDataFrame([(datetime.now(timezone.utc), json.dumps(report, default=str))], "run_ts timestamp, summary string") \
+     .write.mode("append").saveAsTable(f"{O}.extraction_runs")
+dbutils.notebook.exit(json.dumps(report.get("llm", {}), default=str))
