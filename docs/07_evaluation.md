@@ -192,6 +192,20 @@ precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (
 
 ## 4. Retrieval and answers (notebook 61, `ml.rag_eval_results`)
 
+**Index (notebook 60, 2026-10-22) [M]:** 9,564 passages embedded (`databricks-gte-large-en`, 1,024 dimensions; 0
+missing): reports 5,226 (PAD 1,355, ICR 1,052, ISR 1,043, Project Paper 505, Country Assistance Strategy 383, ICR
+Review 355, Procurement Plan 306, CPF 227) + 4,338 procurement-notice passages. Vector Search endpoint
+`procurement-vs` created (approved) and online; Delta Sync index `procurement.docs.chunk_index` ready with 9,564 rows.
+The test query returns the **same top 5** from Vector Search and from the cosine fallback; **HYBRID mode is supported**
+on this index, and a query naming a contract reference finds it in the top 5 (also with the keyword fallback). The
+first attempt failed before running any code: an unpinned `databricks-vectorsearch` install downgraded protobuf
+6.33.5 → 5.29.6 and the serverless Python kernel did not start; the client is now pinned to 0.66.
+
+**Evaluation set (notebook 61, stage = questions) [M]:** 49 questions (rating 3, lesson 30, tender design 5, contract 5,
+refusal 6); 35 synthetic ones **await review** in docs/11 (suggested: 18 keep, 2 keep?, 3 rephrase, 4 replace, 8 in
+near-duplicate pairs split across the two halves). Only 3 rating questions: an ICR outcome rating was found for 3 of
+16 projects (IEG reviews hold 12 more).
+
 All metrics are on the **test half**. The refusal threshold was set on the calibration half (checkpoint d change 4).
 
 | Test half | n | recall@5 | recall@10 | MRR | citation validity | claim support | refusal accuracy |
@@ -209,5 +223,14 @@ rating-answer accuracy _[run]_ · synthetic-question word overlap (median; count
 
 ## 5. Early warnings and backtest (notebook 70)
 
-Flags by type _[run]_ · backtest crosstab (any flag one year before ICR vs outcome ≤ MU), n ≤ 16, descriptive _[run]_ ·
-amendment indicator vs extracted events (Spearman, descriptive) _[run]_
+**Run 2026-10-22 [M]:** open tenders **138** (after excluding 25 rounds superseded by a re-advertisement and 213 notices
+older than 3 years with no contract found; without these exclusions the first run had 376 "open" tenders and 329
+overdue flags). Flags: **tender overdue 91**, **disbursement lag 16**; 38 active projects flagged. An overdue flag means
+"check this tender": an unmatched notice can also be a contract that did not join (36% of contracts match a notice).
+Backtest: only **3** projects have both a flag one year before the ICR and an ICR outcome (1 bad outcome): too few to
+read anything. Amendment indicator vs LLM-extracted events: Spearman **−0.08** (no relation; descriptive).
+
+## 6. App setup (notebook 80)
+
+1 of 3 Free Edition apps used (`wbintelligence2`, stopped): there is room, nothing needs stopping or deleting. Grants
+are applied after the app is created (they need its service-principal ID).
