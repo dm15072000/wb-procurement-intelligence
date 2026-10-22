@@ -22,10 +22,19 @@ from collections import Counter
 from src.guardrails.citation_check import quote_in_text
 
 EVENT_TYPES = ("amendment", "time_extension", "cost_overrun", "rebid", "cancellation", "termination",
-               "procurement_delay", "complaint")
+               "procurement_delay", "implementation_delay", "complaint")   # implementation_delay added 2026-10-22
 # Event types the LLM writes that mean an allowed type. EMPTY on purpose: it is filled only from types actually seen
 # in stored replies (ops.extraction_replies), never guessed. Re-validating stored replies applies it with no LLM call.
-EVENT_TYPE_SYNONYMS = {}
+EVENT_TYPE_SYNONYMS = {
+    # From the 299 unknown types logged by the redo_bad_type run (2026-10-22); counts in brackets.
+    "rebidding": "rebid", "retendering": "rebid",                                  # (4) (2)
+    "delay": "implementation_delay", "construction_delay": "implementation_delay",    # (7) (1)
+    "contract_delay": "implementation_delay", "completion_delay": "implementation_delay",   # (1) (1)
+    "time_overrun": "implementation_delay",                                       # (2)
+    # Left out on purpose: milestones that are not problems (completion 141, contract_signature 24, award 14,
+    # contract_award 12, procurement 12, ...), project-level financial changes (restructuring 15, partial / loan
+    # cancellation 3), and one-offs (fraud, suspension, accident, ...).
+}
 LESSON_TOPICS = ("packaging", "market_capacity", "specifications", "supervision", "contract_management",
                  "procurement_capacity", "safeguards", "design_quality", "other")
 KIND = "combined"            # one call per passage returns lessons AND events; logged under this kind

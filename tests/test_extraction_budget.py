@@ -144,9 +144,21 @@ def test_unknown_event_types_are_counted_by_value_and_synonyms_apply():
                                                    "quote": "The contractor defaulted on Package 4."}]})
     kept, rej = lx.validate(reply, c, "events")
     assert kept == [] and rej["bad_type"] == 1 and rej["bad_type_values"] == {"contractor_default": 1}
+    saved = dict(lx.EVENT_TYPE_SYNONYMS)
     lx.EVENT_TYPE_SYNONYMS["contractor_default"] = "termination"
     try:
         kept, rej = lx.validate(reply, c, "events")
         assert len(kept) == 1 and kept[0]["event_type"] == "termination" and rej["bad_type"] == 0
     finally:
         lx.EVENT_TYPE_SYNONYMS.clear()
+        lx.EVENT_TYPE_SYNONYMS.update(saved)
+
+
+def test_real_unknown_types_map_to_allowed_ones_and_milestones_stay_out():
+    c = _c("m", ICR, text="Package 4 was retendered in 2019. The works were completed in 2021.")
+    reply = json.dumps({"lessons": [], "events": [
+        {"event_type": "retendering", "description": "x", "quote": "Package 4 was retendered in 2019."},
+        {"event_type": "completion", "description": "y", "quote": "The works were completed in 2021."}]})
+    kept, rej = lx.validate(reply, c, "events")
+    assert [k["event_type"] for k in kept] == ["rebid"] and rej["bad_type_values"] == {"completion": 1}
+    assert "implementation_delay" in lx.EVENT_TYPES and lx.EVENT_TYPE_SYNONYMS["time_overrun"] == "implementation_delay"
