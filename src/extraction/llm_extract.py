@@ -23,6 +23,9 @@ from src.guardrails.citation_check import quote_in_text
 
 EVENT_TYPES = ("amendment", "time_extension", "cost_overrun", "rebid", "cancellation", "termination",
                "procurement_delay", "complaint")
+# Event types the LLM writes that mean an allowed type. EMPTY on purpose: it is filled only from types actually seen
+# in stored replies (ops.extraction_replies), never guessed. Re-validating stored replies applies it with no LLM call.
+EVENT_TYPE_SYNONYMS = {}
 LESSON_TOPICS = ("packaging", "market_capacity", "specifications", "supervision", "contract_management",
                  "procurement_capacity", "safeguards", "design_quality", "other")
 KIND = "combined"            # one call per passage returns lessons AND events; logged under this kind
@@ -183,6 +186,7 @@ def validate(raw, chunk, kind):
     validated twice, once per kind. Returns (kept items with chunk provenance, rejection counts)."""
     d = _json(raw)
     rejected = {"unparseable": 0, "bad_type": 0, "quote_not_found": 0, "not_happened": 0}
+    bad_type_values = {}
     if not isinstance(d, dict) or not isinstance(d.get(kind), list):
         rejected["unparseable"] += 1
         return [], rejected
@@ -191,9 +195,14 @@ def validate(raw, chunk, kind):
         if not isinstance(item, dict):
             rejected["unparseable"] += 1
             continue
-        if kind == "events" and item.get("event_type") not in EVENT_TYPES:
-            rejected["bad_type"] += 1
-            continue
+        if kind == "events":
+            et = str(item.get("event_type") or "").strip().lower().replace(" ", "_").replace("-", "_")
+            et = EVENT_TYPE_SYNONYMS.get(et, et)
+            if et not in EVENT_TYPES:
+                rejected["bad_type"] += 1
+                bad_type_values[et or "<empty>"] = bad_type_values.get(et or "<empty>", 0) + 1
+                continue
+            item["event_type"] = et
         if kind == "lessons" and item.get("topic") not in LESSON_TOPICS:
             item["topic"] = "other"
         if not quote_in_text(item.get("quote"), chunk.get("text")):
@@ -205,6 +214,8 @@ def validate(raw, chunk, kind):
         kept.append(dict(item, chunk_id=chunk["chunk_id"], doc_id=chunk.get("doc_id"),
                          project_id=chunk.get("project_id"), doc_type=chunk.get("doc_type"),
                          doc_date=chunk.get("doc_date")))
+    if bad_type_values:
+        rejected["bad_type_values"] = bad_type_values     # logged, so unknown types can be listed later
     return kept, rejected
 
 

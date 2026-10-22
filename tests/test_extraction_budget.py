@@ -136,3 +136,17 @@ def test_event_reference_matched_by_the_code_inside_it():
     assert lx.match_contract("GYTJ201B, 205A, 305A, and 309A", refs) == "C:1615168"
     assert lx.match_contract("IDA-59380-001", refs) is None              # a loan number, not a contract
     assert lx.match_contract("three contracts in Bihar", refs) is None
+
+
+def test_unknown_event_types_are_counted_by_value_and_synonyms_apply():
+    c = _c("t", ICR, text="The contractor defaulted on Package 4.")
+    reply = json.dumps({"lessons": [], "events": [{"event_type": "Contractor Default", "description": "x",
+                                                   "quote": "The contractor defaulted on Package 4."}]})
+    kept, rej = lx.validate(reply, c, "events")
+    assert kept == [] and rej["bad_type"] == 1 and rej["bad_type_values"] == {"contractor_default": 1}
+    lx.EVENT_TYPE_SYNONYMS["contractor_default"] = "termination"
+    try:
+        kept, rej = lx.validate(reply, c, "events")
+        assert len(kept) == 1 and kept[0]["event_type"] == "termination" and rej["bad_type"] == 0
+    finally:
+        lx.EVENT_TYPE_SYNONYMS.clear()

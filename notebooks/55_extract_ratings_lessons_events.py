@@ -153,7 +153,10 @@ for label, pool in (("PASSED", [c for c in chunks if c["chunk_id"] in passed_ids
 
 # COMMAND ----------
 
-dbutils.widgets.dropdown("mode", "dry_run", ["dry_run", "extract"])
+# Modes: dry_run (default, stop here) | extract (new / changed passages) | redo_bad_type (re-send only passages that had
+# events with an unknown type; needs approved_calls) | revalidate (re-check STORED replies with the current rules and
+# type synonyms: no LLM call).
+dbutils.widgets.dropdown("mode", "dry_run", ["dry_run", "extract", "redo_bad_type", "revalidate"])
 dry = {k: v for k, v in scope_info.items()}
 spark.createDataFrame([(datetime.now(timezone.utc), json.dumps(dry, ensure_ascii=False), LLM)],
                       "run_ts timestamp, scope_json string, endpoint string") \
@@ -181,6 +184,13 @@ if dbutils.widgets.get("mode") == "dry_run":
 # The approved number comes from the `approved_calls` widget / job parameter (default 0 = nothing approved).
 dbutils.widgets.text("approved_calls", "0")
 APPROVED_CALLS = int(dbutils.widgets.get("approved_calls") or 0)   # e.g. 1548, approved by the user 2026-10-22
+MODE = dbutils.widgets.get("mode")
+if MODE == "redo_bad_type":
+    # Only passages whose events had a type outside EVENT_TYPES (their replies were not stored before 2026-10-22).
+    bad_ids = {r.chunk_id for r in spark.sql(f"""SELECT DISTINCT chunk_id FROM {O}.extraction_log
+                 WHERE cast(get_json_object(rejected, '$.events.bad_type') AS INT) > 0""").collect()}
+    todo = [c for c in chunks if c["chunk_id"] in bad_ids]
+    print(f"redo_bad_type: {len(todo)} passages to re-send")
 assert len(todo) <= APPROVED_CALLS, (f"{len(todo)} LLM calls planned but APPROVED_CALLS = {APPROVED_CALLS}: "
                                      "check the section 2 counts, then set APPROVED_CALLS")
 
@@ -214,6 +224,8 @@ def run_batch(batch):
                       failOnError => false) AS r
       FROM extraction_requests""").select("chunk_id", "r.result", "r.errorMessage").collect()
     lessons, events, log_rows, rejected, errors = [], [], [], Counter(), 0
+    raw_rows = [(r.chunk_id, by_id[r.chunk_id]["text_hash"], r.result, datetime.now(timezone.utc))
+                for r in replies if r.result is not None and not r.errorMessage]
     now = datetime.now(timezone.utc)
     for r in replies:
         if r.errorMessage or r.result is None:
@@ -222,8 +234,8 @@ def run_batch(batch):
         c = by_id[r.chunk_id]
         kept_l, rej_l = lx.validate(r.result, c, "lessons")
         kept_e, rej_e = lx.validate(r.result, c, "events")
-        rejected.update(rej_l)
-        rejected.update(rej_e)
+        rejected.update({k: v for k, v in rej_l.items() if k != "bad_type_values"})
+        rejected.update({k: v for k, v in rej_e.items() if k != "bad_type_values"})
         for k in kept_l + kept_e:
             k["text_hash"] = c["text_hash"]
         for k in kept_e:
@@ -244,6 +256,11 @@ def run_batch(batch):
     if events:
         spark.createDataFrame([{k: e.get(k) for k in EVENT_COLS} for e in events], EVENT_SCHEMA) \
              .write.mode("append").saveAsTable(f"{S}.contract_events")
+    if raw_rows:           # raw replies kept, so they can be re-validated later without calling the LLM again
+        spark.sql(f"""CREATE TABLE IF NOT EXISTS {O}.extraction_replies
+                      (chunk_id STRING, text_hash STRING, reply STRING, received_at TIMESTAMP)""")
+        spark.sql(f"DELETE FROM {O}.extraction_replies WHERE chunk_id IN ({', '.join(repr(x[0]) for x in raw_rows)})")
+        spark.createDataFrame(raw_rows, "chunk_id string, text_hash string, reply string, received_at timestamp")              .write.mode("append").saveAsTable(f"{O}.extraction_replies")
     if log_rows:           # written LAST: a chunk counts as done only once its results are saved
         spark.createDataFrame(log_rows, "chunk_id string, text_hash string, kind string, n_kept int, rejected string, "
                               "processed_at timestamp").write.mode("append").saveAsTable(f"{O}.extraction_log")
@@ -251,6 +268,32 @@ def run_batch(batch):
             "matched": sum(1 for e in events if e.get("matched_contract_key")), "rejected": rejected}
 
 by_id = {c["chunk_id"]: c for c in chunks}
+if MODE == "revalidate":
+    # Re-check every STORED reply with the current rules (types, synonyms, quote and "happened" checks): no LLM call.
+    stored = spark.sql(f"""SELECT r.chunk_id, r.reply FROM {O}.extraction_replies r
+                           JOIN current_chunks c ON c.chunk_id = r.chunk_id AND c.text_hash = r.text_hash""").collect()         if spark.catalog.tableExists(f"{O}.extraction_replies") else []
+    re_l, re_e, re_rej = [], [], Counter()
+    for r in stored:
+        c = by_id[r.chunk_id]
+        kl, rl = lx.validate(r.reply, c, "lessons")
+        ke, rejected_e = lx.validate(r.reply, c, "events")
+        for k in kl + ke:
+            k["text_hash"] = c["text_hash"]
+        for k in ke:
+            k["matched_contract_key"] = lx.match_contract(k.get("contract_reference"), refs.get(k["project_id"], {}))
+        re_l += kl; re_e += ke
+        re_rej.update({k: v for k, v in rejected_e.items() if k != "bad_type_values"})
+    ids = sorted({r.chunk_id for r in stored})
+    for table, rows_, schema, cols in ((f"{G}.lessons", re_l, LESSON_SCHEMA, LESSON_COLS),
+                                       (f"{S}.contract_events", re_e, EVENT_SCHEMA, EVENT_COLS)):
+        if ids:
+            spark.sql(f"DELETE FROM {table} WHERE chunk_id IN ({', '.join(repr(x) for x in ids)})")
+        if rows_:
+            spark.createDataFrame([{k: x.get(k) for k in cols} for x in rows_], schema).write.mode("append").saveAsTable(table)
+    report["revalidate"] = {"stored_replies": len(stored), "lessons": len(re_l), "events": len(re_e),
+                            "events_rejected": dict(re_rej)}
+    print(json.dumps(report["revalidate"], indent=2))
+    todo = []          # no LLM call in this mode
 totals = Counter()
 n_batches = -(-len(todo) // BATCH_SIZE)
 stopped_early = None

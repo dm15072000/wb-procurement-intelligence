@@ -139,6 +139,36 @@ forecast. Classifier: **AUC 0.46, not kept**. In this run's first pass it was ma
 Brier only (a model predicting "low" everywhere wins on Brier when the test period has few positives); the gate now
 also requires AUC ≥ 0.6. Nothing downstream used the classifier (the app uses the rates).
 
+**How much one project drives the rate [M] (gold.rebid_labels, run 3):**
+
+| Category | Tenders | Re-bid or cancellation | Rate | Without P157054: tenders | positives | rate |
+|---|---|---|---|---|---|---|
+| **All** | 3,224 | 439 | **13.6%** | 2,025 | 94 | **4.6%** |
+| Works | 2,615 | 417 | 15.9% | 1,423 | 72 | 5.1% |
+| Goods | 542 | 22 | 4.1% | 535 | 22 | 4.1% |
+| Non-consulting services | 42 | 0 | 0% | 42 | 0 | 0% |
+| unknown category | 24 | 0 | 0% | 24 | 0 | 0% |
+| Consultant services | 1 | 0 | 0% | 1 | 0 | 0% |
+
+P157054 (Madhya Pradesh rural roads, 1,199 IFB tenders) holds **345 of the 439 positives (79%)**, all of them works
+packages re-advertised under new references (345 of the 391 re-advertisement flags). Without it the works rate is
+5.1% and the overall rate 4.6%; goods are unaffected. The hierarchical rates compare within country + category +
+method, so an Indian works tender is compared mostly with P157054, while other countries' rates are not inflated by it.
+
+**The low rate from 2023 is partly right-censoring [A, supported by M].** By start year, the rate without P157054 is
+2018 22% (23 / 105), 2019 4.5%, 2020 2.5%, 2021 4.1%, 2022 7.7%, then **2023 2.0%, 2024 1.2%, 2025 1.8%, 2026 2.6%**
+(data to 2026-10-20). A re-advertisement appears a median **134 days** after the previous round (90% within 223 days;
+outside P157054 median 182, 90% within 485 days), and a plan entry is marked cancelled only when the plan is next
+revised. So tenders started in roughly the last 6–16 months have not yet had time to be re-advertised or cancelled,
+and their observed rate is a lower bound. Part of the drop is real (P157054's mass re-advertising ended in 2022);
+the time-split test (test period from Feb 2023) is affected by both, which is why its base rate (1.7%) is far below
+training (16.6%).
+
+**Time from first advertisement: a monitoring metric only (user decision 2026-10-22).** The duration model keeps the
+per-round duration as its target. "Time from first advertisement" (gold.tender_durations_chain) is shown only as a
+monitoring metric, e.g. "package advertised 3 times, 630 days since the first advertisement", never as a model
+prediction.
+
 ## 3. Extraction (notebook 55)
 
 Events must have **happened**: the prompt excludes conditions, plans and words inside project names, and a mechanical check rejects event quotes that are future or conditional ("will be subject to re-bidding", "sera relancé") or whose only re-bid word is a project name ("Projet de Relance…"); rejections are counted as `not_happened` (unit-tested with both real examples).
@@ -148,6 +178,14 @@ Events must have **happened**: the prompt excludes conditions, plans and words i
 **Extraction run (2026-10-22, APPROVED_CALLS = 1,548, approved by the user) [M]:** **1,548 of 1,548 passages processed in 16 batches, 0 call errors, not stopped by quota** (Llama 3.3 70B via `ai_query`, temperature 0). Kept: **1,199 lessons** (procurement capacity 279, contract management 272, design quality 183, safeguards 92, supervision 70, market capacity 20, packaging 6, specifications 3, other 274) and **1,042 events** (procurement delay 334, amendment 216, cancellation 194, time extension 167, termination 73, cost overrun 23, re-bid 20, complaint 15). 760 passages gave nothing usable. Rejected by the checks: events 341 with a type outside the fixed list, 83 quotes not found word for word, **89 not happened** (conditions / plans / project names), 1 unparseable; lessons 29 quotes not found, 1 unparseable. Graph: 1,199 Lesson and 230 Rating nodes, 0 orphan edges. Rating conflicts: 1 IEG downgrade, 2 ISR volatility.
 
 **Event → contract links: 3 of 1,042.** The first pass linked 0 because the LLM writes references with extra words ("Contract HAMP-GD-02"); codes inside the reference are now matched (`match_contract`) and saved events are re-linked each run. Only 26 references contain any code at all, and most are loan numbers ("IDA-59380-001") or restructuring sequences: reports describe problems at project or package-group level ("three contracts in Bihar", "works contracts for 285 packages"), which matches the 1.3% passage-link coverage at checkpoint (c). Events are therefore used per project (early warnings, L4), not per contract. Precision of lessons and events is not yet measured: notebook 55 section 6 prints 20 of each for your review.
+
+**The 341 events rejected for an unknown type cannot be listed yet.** The run logged only rejection COUNTS, not the
+LLM replies, so the type values the LLM wrote are not stored anywhere (a gap in the notebook, fixed). From now on:
+(1) every raw reply is stored in `ops.extraction_replies`; (2) unknown type values are logged by name
+(`bad_type_values`); (3) mode **revalidate** re-checks stored replies with the current rules and the type map
+`EVENT_TYPE_SYNONYMS` (kept empty until real values are seen, never guessed) **without any LLM call**. To list the 341,
+mode **redo_bad_type** re-sends only the **176 passages** that had unknown types (176 calls, needs approval); after
+that, mapping types and re-validating costs nothing.
 
 Ratings rows _[run]_ · conflicts by flag _[run]_ · lessons kept / rejected _[run]_ · events kept / rejected _[run]_ ·
 precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (20): _[your review]_
