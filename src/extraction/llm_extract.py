@@ -53,7 +53,9 @@ TRIGGER_PATTERNS = {
     "variation_order": r"variation orders?|ordres? de (modification|variation)",
     "delay": r"\bdelay|\bretards?\b",
     "extension_of_time": r"extension of (the )?time|time extension|prolongation|prorogation|report (de|du) delai",
-    "terminat": r"terminat|resili",
+    # word start required, and only the French termination words: a bare "resili" also matched English "resilience" /
+    # "resilient" (582 hits, 222 passages sent for nothing in the 2026-10-22 dry run)
+    "terminat": r"\bterminat|\bresili(ation|e|er|ee)s?\b",
     "lesson": r"lesson|\blecons?\b|enseignements?",
 }
 _SECTION = {k: re.compile(v) for k, v in SECTION_PATTERNS.items()}

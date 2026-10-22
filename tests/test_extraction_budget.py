@@ -121,3 +121,10 @@ def test_event_happened_guard_in_english_and_french():
     assert not lx.event_happened("The contract may be terminated if progress does not improve.", "termination")
     assert not lx.event_happened("Le marche sera relance en 2024.", "rebid")
     assert not lx.event_happened("Works are expected to be delayed by the rains.", "procurement_delay")
+
+
+def test_termination_trigger_ignores_resilience():
+    assert lx.prefilter(_c("r", ISR, text="Climate-resilient roads improve resilience to floods.")) is None
+    assert lx.prefilter(_c("t", ISR, text="Le marché a été résilié en 2021."))["triggers"] == ["terminat"]
+    assert lx.prefilter(_c("u", ISR, text="The contract was terminated in March."))["triggers"] == ["terminat"]
+    assert lx.prefilter(_c("v", ISR, text="The determination of unit rates was slow.")) is None

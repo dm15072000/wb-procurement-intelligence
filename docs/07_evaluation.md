@@ -98,6 +98,8 @@ from about 51 to several hundred positives, so it needs a precision sample first
 
 Events must have **happened**: the prompt excludes conditions, plans and words inside project names, and a mechanical check rejects event quotes that are future or conditional ("will be subject to re-bidding", "sera relancé") or whose only re-bid word is a project name ("Projet de Relance…"); rejections are counted as `not_happened` (unit-tested with both real examples).
 
+**Dry run (2026-10-22) [M]:** 5,226 chunks · 4,310 in reporting document types (excluded: Country Assistance Strategy 383, Procurement Plan 306, CPF 227) · 268 repeat copies skipped · first dry run **1,767 calls**. Bug found in the filter: the French termination trigger "résili" also matched English "resilience" / "resilient" (582 hits; 222 passages passed for that reason alone). Fixed to the French termination words only (*résiliation, résilié, résilier*) with a word start; recount on the same chunks: **1,548 calls** (ISR 447, PAD 414, ICR 370, Project Paper 180, ICR Review 137). Ratings (section 1, regex): 230 ratings for 16 projects, 3 rating conflicts.
+
 Ratings rows _[run]_ · conflicts by flag _[run]_ · lessons kept / rejected _[run]_ · events kept / rejected _[run]_ ·
 precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (20): _[your review]_
 
