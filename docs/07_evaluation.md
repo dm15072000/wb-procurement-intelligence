@@ -320,8 +320,43 @@ measured norm (error < 0.01; `l2_score_to_cosine`), and the threshold grid is no
 scores, so it can never miss the scale again. Calibration scores on the old scale: answerable p10 0.0027 / median
 0.0036, refusals 0.0025–0.0029, i.e. cosine ≈ 0.68 / 0.76 vs 0.65–0.70: the gate separates them only weakly.
 
-**After translation + gate fix:** _[pending: notebook 60 sync and notebook 61 re-run, blocked by the daily compute
-limit on 2026-10-23]_ strict / lenient recall, French-source recall, gate threshold and blocked counts.
+**After translation + gate fix (run 2026-10-23 17:01 UTC, test half n = 26) [M].** Index sync on 2026-10-23 picked up
+only the 196 changed vectors (incremental Delta Sync; nothing else re-embedded; checked: each sampled translated vector
+returns itself at score 1.0).
+
+| | before | after |
+|---|---|---|
+| recall@5 strict / lenient | 0.52 / 0.78 | **0.52 / 0.78** (unchanged) |
+| MRR strict / lenient | 0.40 / 0.70 | 0.41 / 0.70 |
+| answered share (answerable questions) | 0.13 (gate bug) | **0.78** |
+| claim support / citation validity | 1.00 / 1.00 (on 3 answers) | **0.905 / 1.00** (verifier: 83 kept, 5 removed) |
+| judge second opinion | 5 claims, 100% | 40 claims, **100%** supported |
+| refusal accuracy | 3 / 3 | **3 / 3** |
+| rating answer accuracy | 1 / 1 | 1 / 1 |
+| French-source questions, recall@5 strict / lenient | 0 / 0 | **0 / 0** |
+
+**French-source questions, pure vector rank of the gold passage among all 9,564** (question embedded; "before"
+recomputed by embedding the original French text the same way, 3 calls, nothing written):
+
+| Question | before (French vector) | after (English translation) | eval outcome after |
+|---|---|---|---|
+| Sikasso phase II lots and duration (notice OP00217456) | rank 150 (cos 0.657) | **rank 25** (0.684) | answered from a sibling notice (‑0000) |
+| Six-lot works value, Koulikoro + Sikasso (P160505 plan) | rank 3 (0.777) | rank 8 (0.757) | insufficient evidence |
+| P151449 ICR: fix contract award / management weaknesses | > 200 (0.671) | > 200 (0.684) | insufficient evidence |
+
+Translation helped the notice question a lot, slightly hurt the plan question (its French text shares codes and place
+names with the question, which the translation dilutes) and did not help the lesson question (the gold passage is about
+reconstructing tracks; the question's wording is far from it). None reaches the top 5, so French-source recall stays 0.
+Honest conclusion: translating for embedding is not enough on its own; the keyword side of hybrid search also runs on
+the original French text, so English words in the question do not match it. Next steps [P]: index the translation for
+keyword matching too, or (production) a multilingual embedding model; and widen the French questions beyond 3 before
+drawing conclusions.
+
+**Gate behaviour after the fix [M].** Threshold **0.682** (cosine), chosen on the calibration half: 91% of answerable
+calibration questions pass (answerable p10 0.682, median 0.761, min 0.664); calibration off-topic scores 0.656, 0.689,
+0.698, so only 1 of 3 is below the threshold: **the gate separates on-topic from off-topic only weakly**. Test half:
+**1 of 23 answerable questions blocked** by the gate; **2 of 3 off-topic questions refused by the gate**, the third by
+the answer step (insufficient evidence), so refusal accuracy is 3 / 3. 5 questions were routed to completion reports.
 
 ## 5. Early warnings and backtest (notebook 70)
 
@@ -360,6 +395,7 @@ credentials) on 2026-10-23:
 https://dbc-0db6d6cc-81dd.cloud.databricks.com/dashboardsv3/01f1ceeebce61e21a109a466e6866a7a/published
 Pages: data health, model quality, assistant quality, usage & impact (**test usage only**; business KPIs are the
 **proposed** pilot targets of docs/08 §6.2–6.3). The views were created and checked against live data (e.g. re-bid or
-cancellation 13.6% of 3,224 tenders, 4.6% of 2,025 without P157054 [M]); the corrected coverage view and the link in
-`ops.config` (read by the app's sidebar) are written by notebook 85, still to run once compute is available. The
+cancellation 13.6% of 3,224 tenders, 4.6% of 2,025 without P157054 [M]); notebook 85 ran on 2026-10-23 (views re-created, same
+dashboard updated, link saved in `ops.config` for the app's sidebar). All 15 dataset queries run and return every
+field the widgets use (usage and feedback have 0 rows: no app requests logged yet); visual rendering not yet checked. The
 weekly job runs notebook 85 last (`run_if: ALL_DONE`).
