@@ -267,6 +267,62 @@ rating-answer accuracy _[run]_ · synthetic-question word overlap (median; count
 (quarantined? planted claim survived?) _[run]_ · notice chunks indexed (notebook 21) _[run]_ · hybrid identifier check
 (notebook 60) _[run]_ · Re-bid: IFB notices excluded as modifications (notebook 51) _[run]_
 
+### 4b. Retrieval-evaluation upgrade and languages (2026-10-22/23)
+
+**Languages [M] (notebook 22, `docs.chunk_language`).** 9,564 passages: **English 8,836, French 196, other 532**
+("other" = tables, figures, name lists and non-prose; checked on samples, not translated).
+
+| Doc type | EN | FR | other | total |
+|---|---|---|---|---|
+| Procurement Notice | 4,141 | **141** | 56 | 4,338 |
+| PAD | 1,297 | 0 | 58 | 1,355 |
+| ICR | 927 | **7** (one French annex, P151449) | 118 | 1,052 |
+| ISR | 1,034 | 0 | 9 | 1,043 |
+| Project Paper | 445 | 0 | 60 | 505 |
+| Country Assistance Strategy | 360 | 0 | 23 | 383 |
+| ICR Review | 326 | 0 | 29 | 355 |
+| Procurement Plan | 178 | **48** | 80 | 306 |
+| CPF | 128 | 0 | 99 | 227 |
+
+French is under the ~1,000 limit, so all **196 French passages were translated to English for embedding only**
+(Llama 3.3 70B, 196 calls, 0 errors). Each translation keeps the share of the original's numbers it contains: mean
+**0.976**; 12 below 0.9 (lowest 0.47, a long notice cut by the output limit). Notebook 60 re-embedded **exactly those
+196** (`embedded_from = english_translation`); the other 9,368 vectors are unchanged. Shown, cited and quoted text is
+always the original. **Index sync pending:** the Vector Search sync failed on 2026-10-23 because the Free Edition
+**daily serverless limit** was reached ("come back tomorrow"); it is re-triggered by re-running notebook 60.
+
+**What changed in notebook 61 [implemented, unit-tested]:** strict AND lenient recall (an LLM judge reads each
+retrieved top-10 passage of a test question against the gold passage; verdicts cached in
+`ml.rag_eval_lenient_judgments`); outcome/rating questions routed to ICR / ICR Review / PPAR (falls back to all types
+if empty); retrieval gate on **pure vector similarity**; 3 French-source questions added to the test half
+(P151449 lessons, P160505 Sikasso lots, P160505 six-lot works value; one older Mali question is also French-source).
+
+**Before translation (run 2026-10-23 04:26, test half n = 26) [M]:**
+
+| | recall@5 strict | recall@5 lenient | MRR strict / lenient |
+|---|---|---|---|
+| All | **0.52** | **0.78** | 0.40 / 0.70 |
+| Lesson (16) | 0.69 | 0.88 | 0.56 / 0.83 |
+| Contract (3) | 0 | 0.67 | 0 / 0.67 |
+| Tender design (3) | 0 | 0.33 | 0 / 0.17 |
+| Rating (1) | 1.00 (routed to the ICR; was 0 and a wrong answer) | 1.00 | 0.33 |
+| **French-source (3)** | **0** | **0** | gold not in the top 10 for any |
+
+Lenient judgements: 72 retrieved passages judged to contain the answer. Rating answer accuracy 1 / 1 (was 0 / 1).
+Refusal accuracy 3 / 3.
+
+**Gate bug found in this run, fixed [M, then implemented].** The "pure vector" scores were ~0.003, not cosine:
+Vector Search scores a plain query as **1 / (1 + L2 distance²)** (verified on a live query: equal to the exact value
+to 6 decimals) and our vectors are not unit length (norm 24.0 ± 0.08 for all 9,564). The calibration grid started at
+0.30, so the gate fell back to 0.30 and blocked **20 of 23** answerable test questions (answered share 0.13; the
+answer metrics of this run therefore cover only 3 answers). Fix: the score is converted back to cosine with the
+measured norm (error < 0.01; `l2_score_to_cosine`), and the threshold grid is now the calibration questions' own
+scores, so it can never miss the scale again. Calibration scores on the old scale: answerable p10 0.0027 / median
+0.0036, refusals 0.0025–0.0029, i.e. cosine ≈ 0.65 / 0.75 vs 0.65–0.69: the gate separates them only weakly.
+
+**After translation + gate fix:** _[pending: notebook 60 sync and notebook 61 re-run, blocked by the daily compute
+limit on 2026-10-23]_ strict / lenient recall, French-source recall, gate threshold and blocked counts.
+
 ## 5. Early warnings and backtest (notebook 70)
 
 **Run 2026-10-22 [M]:** open tenders **138** (after excluding 25 rounds superseded by a re-advertisement and 213 notices
@@ -295,3 +351,15 @@ duration model (through the grants API: SQL "ON MODEL" is rejected) and CAN_USE 
 app's requirements pin the versions the model was trained with (scikit-learn 1.7.2, pandas 2.3.3, numpy 2.3.4,
 mlflow 3.12.0). Build and start succeeded; the pages were not yet opened (they need your sign-in). Apps used: 2 of 3.
 Apps stop 24 h after start: start it again shortly before the demo.
+
+## 7. KPI dashboard (notebook 85, 2026-10-23)
+
+AI/BI (Lakeview) dashboard **Procurement Intelligence KPIs**, defined in `dashboards/` (10 `ops.kpi_` views + JSON
+built by `dashboards/build_dashboard.py`, checked by `tests/test_dashboard.py`). Created and published (owner's
+credentials) on 2026-10-23:
+https://dbc-0db6d6cc-81dd.cloud.databricks.com/dashboardsv3/01f1ceeebce61e21a109a466e6866a7a/published
+Pages: data health, model quality, assistant quality, usage & impact (**test usage only**; business KPIs are the
+**proposed** pilot targets of docs/08 §6.2–6.3). The views were created and checked against live data (e.g. re-bid or
+cancellation 13.6% of 3,224 tenders, 4.6% of 2,025 without P157054 [M]); the corrected coverage view and the link in
+`ops.config` (read by the app's sidebar) are written by notebook 85, still to run once compute is available. The
+weekly job runs notebook 85 last (`run_if: ALL_DONE`).

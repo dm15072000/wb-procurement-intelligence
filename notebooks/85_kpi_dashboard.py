@@ -62,6 +62,10 @@ if dash_id:
         w.api_client.do("GET", f"/api/2.0/lakeview/dashboards/{dash_id}")
     except Exception:
         dash_id = None                                # deleted or trashed: create a new one
+if not dash_id:                                       # deployed before ops.config had the id: find it by name
+    listing = w.api_client.do("GET", "/api/2.0/lakeview/dashboards", query={"page_size": 200})
+    dash_id = next((d["dashboard_id"] for d in listing.get("dashboards", [])
+                    if d.get("display_name") == DISPLAY_NAME and d.get("lifecycle_state") != "TRASHED"), None)
 body = {"display_name": DISPLAY_NAME, "serialized_dashboard": serialized, "warehouse_id": wh}
 if dash_id:
     w.api_client.do("PATCH", f"/api/2.0/lakeview/dashboards/{dash_id}", body=body)

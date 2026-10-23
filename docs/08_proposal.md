@@ -268,6 +268,9 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 | Forecast accuracy in use | online | predicted P50 vs actual signing for pilot tenders [P] |
 | Guardrail removal rate | monitoring | removed / total claims per week (hallucination pressure) [P] |
 
+All of these are on one AI/BI dashboard (`dashboards/`, notebook 85; docs/07 §7): data health, model quality, assistant
+quality and usage. Online KPIs show test usage only until a pilot, and the business KPIs appear as the proposed targets above.
+
 ### 6.4 Scaling the same design [P]
 
 | Dimension | Slice | Full portfolio (estimate, illustrative) | What changes |
