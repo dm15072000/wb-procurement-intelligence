@@ -393,6 +393,44 @@ protection against unsupported answers is the **answer step** (the model must sa
 passages do not answer) and the **claim verifier** (9 unsupported claims removed in the final run), which is why
 refusal accuracy is 3 / 3 even though the gate alone would catch only 2.
 
+### 4c. "Ask the evidence" fixes from app testing (2026-10-23) [M]
+
+**Problems found by the user in the app** (question: "How was implementation progress rated over time for the
+Yunnan highway project, and did the final rating differ from earlier progress reports?"): adding "tell me in detail"
+changed the answer completely, and one answer said the project was "rated High in terms of efficacy, all outcomes
+exceeded".
+
+**Where "High efficacy" came from:** real text, wrong scale. The ICR (33964146-0023) and the IEG ICR Review
+(34057527-0008/-0011/-0012/-0014) rate the **efficacy of the development objectives** as High (scale High /
+Substantial / Modest / Negligible) because outcomes were exceeded. That is not the ISR implementation-progress scale.
+Cause: the routing added the same day sent "outcome / rated" questions to ICR / IEG only, so no ISR was retrieved.
+The extracted ratings already held the real timeline: ISR implementation progress Moderately Satisfactory (Dec 2018,
+Jun 2020) → Satisfactory (Jan 2021); final development outcome Highly Satisfactory (IEG ICR Review, May 2023).
+
+**Fixes (`src/rag/query.py`, unit-tested):** (1) answer-style instructions ("tell me in detail", "explain",
+"summarise", ...) are removed from the search query and passed to the answer step; (2) project NAMES resolve to
+project IDs and filter the search (only capitalised distinctive names; never document-title words or country names;
+only when no ID is typed); (3) rating questions get the extracted rating timeline, the final-outcome rule and any
+conflict flags as structured facts with source passages, plus a note that "efficacy" is a different scale;
+(4) questions about change over time ("over time", "earlier", "progress reports") are no longer routed away from ISRs;
+(5) the citation number check also accepts the cited passage's document date ("the 2016 ISR").
+App crashes fixed the same day: Python 3.11 f-string, numpy arrays from the SQL connector (`arr or []`), a Streamlit
+"magic" one-line conditional on the Monitor screen.
+
+**First version of name matching was harmful, caught by the evaluation:** it matched common words ("safety",
+"maintenance", "Results" in "Results Report") and scoped 20 of 22 matched evaluation questions to the WRONG project;
+recall@5 fell to 0.52 / 0.78 and French recall to 0. After making it strict it fires on none of the 52 (paraphrased)
+evaluation questions and still resolves real names (Yunnan highway → P132621, Madhya Pradesh → P157054, Lushan →
+P153548). Final run (18:54 UTC): recall@5 **0.57 strict / 0.83 lenient**, citation validity 1.00, claim support 0.86
+(verifier removed 6 of 84 claims), independent judge **100%** of 40, refusal accuracy 3 / 3, French-source 0.33,
+answerable blocked by the gate 1 of 23.
+
+**Phrasing robustness (new section 6b of notebook 61):** 5 questions × 2 phrasings (plain and "Tell me in detail: ...").
+**Retrieved top 5 identical for 5 of 5**; same status 5 of 5; the LLM judge found the two answers agree for **4 of 5**.
+The one disagreement is the app's Yunnan question: same passages and rating facts, but the detailed answer's claims
+differ from the plain one's (which claims survive the guardrails varies). Retrieval is now stable; the remaining
+variation is in generation.
+
 ## 5. Early warnings and backtest (notebook 70)
 
 **Run 2026-10-22 [M]:** open tenders **138** (after excluding 25 rounds superseded by a re-advertisement and 213 notices
