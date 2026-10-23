@@ -95,9 +95,11 @@ def split_half(questions, key="qid", strat="kind", group=None):
 
 def calibrate_threshold(rows, min_pass=0.90, grid=None):
     """Highest gate threshold that still lets at least min_pass of the ANSWERABLE calibration questions through
-    (identifier hits always pass). rows: {"top_score", "identifier_hit", "should_refuse"}."""
-    grid = grid or [round(0.30 + 0.01 * i, 2) for i in range(51)]
+    (identifier hits always pass). rows: {"top_score", "identifier_hit", "should_refuse"}.
+    Default grid = the answerable questions' own scores (2026-10-23), so the threshold always sits on the measured
+    scale; a fixed 0.30-0.80 grid silently fell back to 0.30 when the scores were on another scale."""
     answerable = [r for r in rows if not r.get("should_refuse")]
+    grid = grid or sorted({0.0} | {round(r["top_score"], 4) for r in answerable if r.get("top_score") is not None})
 
     def passes(th, rs):
         return sum(r["top_score"] >= th or bool(r.get("identifier_hit")) for r in rs) / max(1, len(rs))

@@ -6,6 +6,7 @@ for embeddings and chat, Vector Search (or the cosine fallback), the registered 
 The SQL runner is passed in, so the same code works with spark.sql in a notebook and with the SQL connector in the
 app. Values that end up inside SQL text (project IDs, contract keys) are validated against strict patterns first.
 """
+import math
 import re
 from datetime import date
 
@@ -30,6 +31,20 @@ def _in_list(values, pattern):
 
 def _fmt_usd(x):
     return f"USD {x:,.0f}" if x is not None else "amount not recorded"
+
+
+# Vector Search scores a plain (ANN) query as 1 / (1 + L2 distance squared) on our unnormalised vectors (measured
+# 2026-10-23: equal to the exact value to 6 decimals). Every stored gte-large-en vector has norm ~24.0 (min 23.40,
+# max 24.38, sd 0.08, 9,564 passages), so the score converts back to cosine similarity with an error below ~0.01.
+CHUNK_NORM = 24.0
+
+
+def l2_score_to_cosine(score, query_norm, chunk_norm=CHUNK_NORM):
+    """Cosine similarity from a Vector Search L2 score: d^2 = 1/score - 1, cos = (|q|^2 + |c|^2 - d^2) / (2|q||c|)."""
+    if score is None or score <= 0 or not query_norm:
+        return None
+    d2 = 1.0 / float(score) - 1.0
+    return round((query_norm ** 2 + chunk_norm ** 2 - d2) / (2 * query_norm * chunk_norm), 4)
 
 
 def attach_vector_scores(hybrid_hits, vector_hits):
@@ -76,7 +91,11 @@ class DatabricksBackend:
             kwargs.update(query_text=text, query_type="HYBRID")
         res = self.vs_index.similarity_search(**kwargs)
         cols = [c["name"] for c in res["manifest"]["columns"]]
-        return [dict(zip(cols, row), hybrid=hybrid) for row in res.get("result", {}).get("data_array", []) or []]
+        hits = [dict(zip(cols, row), hybrid=hybrid) for row in res.get("result", {}).get("data_array", []) or []]
+        if not hybrid:      # report cosine similarity, the same scale as the cosine fallback; keep the raw score
+            qn = math.sqrt(sum(x * x for x in vec))
+            hits = [dict(h, vs_l2_score=h.get("score"), score=l2_score_to_cosine(h.get("score"), qn)) for h in hits]
+        return hits
 
     def search(self, vec, filters, k, text=None):
         """Vector Search (HYBRID when the index supports it and a text is given), else the cosine fallback."""

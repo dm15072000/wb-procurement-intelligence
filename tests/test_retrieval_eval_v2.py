@@ -59,3 +59,19 @@ def test_judge_reply_parsing():
     assert ln.parse("YES") is True and ln.parse(" no.") is False and ln.parse("maybe") is None
     m = ln.build_messages("Q?", "ref", "cand")
     assert "YES or NO" in m[0]["content"] and "CANDIDATE" in m[1]["content"]
+
+
+def test_l2_score_to_cosine_matches_measured_pair():
+    # measured 2026-10-23 on the live index: score 0.004012, |q| 23.98, exact cosine 0.7835
+    assert abs(dt.l2_score_to_cosine(0.004012, 23.98) - 0.7835) < 0.01
+    assert dt.l2_score_to_cosine(None, 24.0) is None and dt.l2_score_to_cosine(0.0, 24.0) is None
+    assert dt.l2_score_to_cosine(0.0045, 24.0) > dt.l2_score_to_cosine(0.0030, 24.0)
+
+
+def test_calibration_grid_follows_the_score_scale():
+    import src.evaluation.questions as eq
+    rows = [{"top_score": s, "should_refuse": False} for s in (0.0030, 0.0032, 0.0035, 0.0036, 0.0040,
+                                                              0.0041, 0.0042, 0.0045, 0.0050, 0.0060)]
+    rows.append({"top_score": 0.0025, "should_refuse": True})
+    th, rep = eq.calibrate_threshold(rows)
+    assert th == 0.0032 and rep["answerable_passing"] >= 0.9 and rep["refusals_blocked_by_gate"] == 1.0
