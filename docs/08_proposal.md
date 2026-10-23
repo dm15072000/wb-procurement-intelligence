@@ -1,9 +1,9 @@
 # Technical Proposal: AI-Powered Procurement Intelligence Platform
 
-World Bank technical assessment · Databricks implementation · Draft 2026-10-21
+World Bank technical assessment · Databricks implementation · Final draft 2026-10-23
 
-Labels: **[V] verified** · **[M] measured** · **[A] assumption** · **[P] proposed** · **[PEND] pending run**: the
-code is written and unit-tested; the number comes from the notebook run and goes in `docs/07_evaluation.md`.
+Labels: **[V] verified** · **[M] measured** (run on Databricks; full tables in `docs/07_evaluation.md`) ·
+**[A] assumption** · **[P] proposed** · **[R] needs the author's hand review**.
 Each section names the requirement it answers (assessment §4 modules, §5 rubric) and the file that implements it.
 
 ---
@@ -137,6 +137,10 @@ real workload.
   Russian, Chinese...), so the production index should use a **multilingual embedding model** served on Databricks
   (to be selected and verified, e.g. an open multilingual model such as BGE-M3 or multilingual-E5), which removes the
   translation step and its cost; translation remains a fallback for a model that is English-only.
+- **Measured [M] (docs/07 §4b):** translation for embedding alone did not change French-source recall (0 of 3); adding
+  English keyword matching over the translations and a French version of the question (for French-speaking countries)
+  recovered 1 of 3 (recall@5 0.33) and lifted overall recall@5 from 0.52 to 0.57. **Known limitation**: the
+  multilingual embedding model is the production fix.
 
 ---
 
@@ -152,7 +156,14 @@ real workload.
   estimate), country, lending type, project age, roads share, commitment, earlier tenders in the project, fiscal month,
   WGI and CPIA from the latest year **published** before the notice (a release-lag rule), with a CPIA-missing flag.
 - **Validation:** time-based split (latest 20% as test); MAE, median AE, P80 coverage, pinball loss; per country and
-  per dataset; ablations without governance and without DS04691. **Results: [PEND]** notebook 50.
+  per dataset; ablations without governance and without DS04691.
+- **Results [M]** (125 prior-review test tenders from Jan 2023): P50 MAE **100.4 days vs 100.8 for the baseline**,
+  P80 coverage **0.81** (pinball 42.8 vs 44.0), but median error 80.5 vs 70.5 days: **level with the baseline**, with a
+  well-calibrated range. Post-review (519 test tenders): MAE 69.5 vs 70.3, median AE 52.3 vs 57.5, P80 coverage 0.83.
+  **Without governance features the prior-review MAE improves to 94.7**: on 500 training rows WGI/CPIA do not help, so
+  the governance hypothesis is not supported on this sample. Method dominates importance (36 days of MAE). Promoted
+  to `champion` as version 1 (no earlier champion). The value delivered is the **calibrated P20–P80 range**, not a
+  sharper point estimate; with STEP's internal estimate (not public) and more rows, the model should pull ahead.
 - **Survival analysis** is proposed rather than built: censoring needs reliably open tenders, and an unmatched notice
   is more often a join failure than an open tender [M: H1].
 
@@ -163,7 +174,16 @@ real workload.
   a cancelled notice, re-bid wording in notice text (English and French), or a Procurement Plan saying so.
 - **Rare-event method:** hierarchical Beta-binomial rates (all → category → category×method → country×category×method),
   each shrunk toward its parent, reported with count and 90% interval ("3 of 41 similar tenders were re-bid or cancelled…"). A
-  classifier is trained only with ≥ 50 positives and kept only if it beats the rates on Brier score. **[PEND]** notebook 51.
+  classifier is trained only with ≥ 50 positives and kept only if it beats the rates on Brier score **and** reaches
+  AUC ≥ 0.6.
+- **Re-advertisement under a new reference** (same project, same package description with the same numbers in order,
+  earlier round without a contract, ≥ 30 days later) is the main source of positives; precision **97%** on 30 random
+  flags and **44 / 44** outside the dominant project [M, hand-checked].
+- **Results [M]:** 3,224 tenders, **re-bid or cancellation 439 (13.6%)** = 391 re-advertised, 33 re-bid by wording or a
+  second IFB, 19 cancelled. One project (P157054, Madhya Pradesh) holds 79% of positives; **without it the rate is
+  4.6%**, works 5.1%, goods 4.1%. Time check from Feb 2023: Brier **0.032 hierarchical vs 0.039 global** (18% lower);
+  classifier AUC 0.46, **not kept**. Recent rates are a lower bound (right-censoring: a re-advertisement appears a median
+  134 days later). The app shows rates with intervals as history, never a forecast.
 
 ### 4.3 Amendment risk
 
@@ -189,7 +209,9 @@ A **fixed tool sequence**, which is easier to test, explain and audit than an op
    criteria, for tender design), all with `doc_date ≤ as-of` and primary copies only; DESCRIBES passages added;
 5. merge and rerank: hybrid score + small bonuses for independent sources (IEG > ICR > ISR) and lessons sections, a
    larger bonus for an exact identifier match, at most 2 passages per document;
-6. retrieval gate (threshold calibrated on the calibration half of the evaluation set; an exact identifier match passes);
+6. retrieval gate on **pure vector similarity** (cosine; threshold calibrated on the calibration half; an exact
+   identifier match passes). Outcome / rating questions are **routed** to ICR, ICR Review and PPAR first. The gate is a
+   **weak first filter** (§5); refusals come mainly from the answer step and the claim verifier;
 7. Llama 3.3 70B at temperature 0 → JSON claims with citation IDs;
 8. guardrails (§5), ending with one batched claim-support verifier call.
 
@@ -216,8 +238,16 @@ data-access functions injected.
 
 All are unit-tested, including a prompt-injection test showing that the planted passage never reaches the model and
 the claim it asks for is rejected. The app shows the sources (title, type, date, section, page, PDF link), the
-structured facts, and how many claims the guardrails removed. Measured citation validity, claim support and judge
-faithfulness: **[PEND]** notebook 61.
+structured facts, and how many claims the guardrails removed.
+
+**Measured on the held-out test half (26 questions, final run 2026-10-23) [M]:** recall@5 **0.57 strict / 0.83
+lenient**; citation validity **1.00**; claim support **0.893** after guardrails (the verifier removed 9 of 99 claims;
+0 mechanical removals); an independent judge found **97.5%** of 40 kept claims supported; refusal accuracy **3 / 3**; rating-answer accuracy 1 / 1 (after routing to the
+ICR; it was wrong before); the planted injection passage was quarantined and its claim did not survive.
+**The retrieval gate is a weak first filter:** calibrated cosine threshold 0.682; off-topic questions score 0.66–0.70
+and answerable ones 0.66–0.86 (median 0.76), so the distributions **overlap**. On the test half it blocked 1 of 23
+answerable and 2 of 3 off-topic questions; the third off-topic question was refused by the answer step. Refusals
+therefore rest mainly on the **answer step ("insufficient evidence") and the claim verifier**, not on the gate.
 
 ### Conflicting evidence (ISR vs ICR vs IEG)
 
@@ -250,7 +280,7 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 
 | Phase | Scope | Exit criteria (go / no-go) [P] |
 |---|---|---|
-| 0. Offline (this work) | roads, 5 countries, frozen evaluation set | recall@5 ≥ 0.7; claim support ≥ 0.9 after guardrails; duration P50 beats baseline; P80 coverage 0.7–0.9 |
+| 0. Offline (this work) | roads, 5 countries, frozen evaluation set | recall@5 ≥ 0.7; claim support ≥ 0.9 after guardrails; duration P50 beats baseline; P80 coverage 0.7–0.9 · **Status [M]: claim support 0.893 ✗ (just under 0.9), P80 coverage 0.81 ✔, P50 level with baseline (≈), recall@5 0.57 strict / 0.83 lenient (✘ strict, ✔ lenient)** |
 | 1. Shadow pilot (3 months) | ~10 procurement specialists in one region, roads; outputs advisory only | ≥ 60% weekly active; ≤ 5% answers flagged wrong-source; no unsupported claim in a 100-answer audit |
 | 2. Expansion | all transport + energy/water, all countries; Vector Search scaled up; docs parsed for every active project | metrics hold per sector; refresh job ≤ 4 h |
 | 3. Integration | links into STEP planning screens (proposal only); internal data (amendments, bid evaluation reports) under access control | security and data-governance sign-off |
@@ -259,10 +289,10 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 
 | KPI | Type | Measured how |
 |---|---|---|
-| Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set (test half; the refusal threshold is set on the other half), per country and per question kind incl. tender design [PEND] |
-| Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61 [PEND] |
-| Duration P50 MAE vs baseline, P80 coverage | offline | notebook 50 [PEND] |
-| Re-bid Brier score vs global rate | offline | notebook 51 [PEND] |
+| Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set (test half; the refusal threshold is set on the other half), per country and per question kind incl. tender design: strict 0.57 / lenient 0.83 [M] |
+| Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61: 1.00 / 0.893 / 97.5% / 3 of 3 [M] |
+| Duration P50 MAE vs baseline, P80 coverage | offline | notebook 50: 100.4 vs 100.8 days; 0.81 [M] |
+| Re-bid Brier score vs global rate | offline | notebook 51: 0.032 vs 0.039 [M] |
 | Planning cycle time (procurement plan drafting) | online | before/after timing in pilot teams [P] |
 | Weekly active users, answers accepted without edit, feedback rate | online | `ops.rag_requests`, `ops.feedback` [P] |
 | Forecast accuracy in use | online | predicted P50 vs actual signing for pilot tenders [P] |
@@ -298,24 +328,26 @@ quality and usage. Online KPIs show test usage only until a pilot, and the busin
 
 ## 8. Implemented vs proposed
 
-| Implemented and tested locally (146 unit tests) | Written, not yet run (needs the user's run) | Proposed only |
+| Implemented, unit-tested (231 local tests) **and run on Databricks** [M] | Built, run once, needs more use | Proposed only [P] |
 |---|---|---|
-| ingestion transforms, keys, countries, suppliers, chunking, dedup, links, procurement-plan checker, duration features/baseline/metrics/promotion, quantile pipeline and wrapper, re-bid labels and rates (modification notices excluded), amendment score, ratings and conflict rules, early warnings, hybrid retrieval (keyword index, identifier matching), notice chunking, RAG prompt/pipeline, guardrails incl. batched claim verifier, extraction validation, evaluation metrics, split and paraphrase checks | notebooks 21, 50, 51, 55, 60, 61, 70, 80; refresh job; app | survival model; learned reranker; legal-entity supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
-
-Notebooks 10–40 ran on 2026-10-21 and their results are in `docs/06_checkpoint_c_report.md`.
-
----
+| ingestion (10–11), documents and chunking (20–22), data-quality gate (12), suppliers (30), graph (40), duration model (50), re-bid labels and rates (51), extraction of ratings / lessons / events (55), embeddings + Vector Search hybrid index (60), RAG evaluation with guardrails (61), early warnings (70), app setup and deployment (80), KPI dashboard (85) | Databricks App (deployed; pages need a demo session), weekly refresh job (defined, created paused, not yet scheduled), feedback loop (tables and buttons exist; no pilot users yet) | survival model; learned reranker; multilingual embedding model; legal-entity supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
 
 ## 9. Risks and limitations (stated, not hidden)
 
-1. Duration model valid mainly for prior-review contracts; contract value is a proxy for the estimate; recent periods
-   are right-censored (optimistic test set).
-2. Re-bid labels are observable only where notices exist; label precision is to be measured on a 20-label review.
-3. Amendment risk is a heuristic indicator on public data.
+1. Duration model valid mainly for prior-review contracts and only level with the baseline on its P50; contract value
+   is a proxy for the estimate; recent periods are right-censored.
+2. Re-bid labels are observable only where notices exist; one project drives most positives (13.6% → 4.6% without it).
+3. Amendment risk is a heuristic indicator on public data (r ≈ −0.08 against extracted events).
 4. Contract ↔ passage links are sparse (1.3%); retrieval does not rely on them.
-5. The evaluation set is partly synthetic (LLM-written, paraphrased questions with measured word overlap, reviewed by
-   the user); the verifier and the judge are the same model family as the generator. Metrics are reported on a held-out
-   half that was not used to set the refusal threshold.
-8. Databricks Apps on Free Edition: up to 3 apps per account, and an app stops 24 hours after it is started.
-6. Lending type is today's classification, not the one at approval.
-7. Supplier identity is brand + country, not legal entity; cross-script aliases are future work.
+5. The evaluation set is small (26 test questions) and partly synthetic (LLM-written, paraphrased, reviewed by the
+   author); the verifier and the judge are the same model family as the generator. Metrics are on a held-out half.
+6. The retrieval gate is a weak first filter (overlapping score distributions); refusals rely on the answer step and
+   the verifier.
+7. **French and other non-English sources** (§3.4): only partly solved. Translating 196 French passages for embedding
+   changed nothing measurable; adding English keyword matching over the translations and a French query pass found 1
+   of 3 French-source test questions (recall@5 0 → 0.33, n = 3). Known limitation; production fix: a multilingual
+   embedding model.
+8. Lending type is today's classification, not the one at approval.
+9. Supplier identity is brand + country, not legal entity; cross-script aliases are future work.
+10. Databricks Free Edition: up to 3 apps, an app stops 24 hours after start, and a **daily serverless compute
+    quota** (hit once on 2026-10-23; runs resumed the same day).

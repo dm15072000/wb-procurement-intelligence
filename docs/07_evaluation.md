@@ -1,20 +1,38 @@
 # 07 — Evaluation results (Stage 6)
 
-Status: **template: no results yet.** Every cell marked _[run]_ is filled from the summary cell of the named
-notebook after you run it. Nothing here may be filled by estimate (CLAUDE.md: never invent results).
+Status (2026-10-23): **measured results for every module** (notebooks 50, 51, 55, 60, 61, 70, 80, 85 ran on Databricks).
+Every figure is copied from the named notebook's stored summary; nothing here is estimated (CLAUDE.md). The few cells
+still open are marked _[your review]_ (hand checks that only you can do).
 
-## 1. Tender duration (notebook 50, `ml.duration_model_report`)
+## 1. Tender duration (notebook 50, `ml.duration_model_report`, run 2026-10-22) [M]
+
+Time split: the latest 20% of tenders by start date are the test set. P50 MAE = mean absolute error of the median
+prediction in days; P80 coverage = share of actual durations at or below the predicted P80 (target 0.7–0.9).
 
 | | n train | n test | test from | P50 MAE (days) | median AE | P80 coverage | pinball 0.8 |
 |---|---|---|---|---|---|---|---|
-| Baseline (median by category × method), prior review | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
-| GBT quantile, **prior review (main)** | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
-| GBT, post review (secondary) | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
-| Ablation: no governance features | _[run]_ | | | _[run]_ | | _[run]_ | |
-| Ablation: without DS04691 training rows | _[run]_ | | | _[run]_ | | _[run]_ | |
+| Baseline (median by category × method), prior review | 500 | 125 | 2023-01-17 | 100.8 | **70.5** | 0.800 | 44.0 |
+| GBT quantile, **prior review (main)** | 500 | 125 | 2023-01-17 | **100.4** | 80.5 | **0.808** | **42.8** |
+| Baseline, post review | 2,052 | 519 | 2024-01-16 | 70.3 | 57.5 | 0.827 | 27.9 |
+| GBT, post review (secondary) | 2,052 | 519 | 2024-01-16 | **69.5** | **52.3** | 0.825 | **26.7** |
+| Ablation: no governance features (prior) | 500 | 125 | | **94.7** | | 0.800 | |
+| Ablation: without DS04691 training rows (prior) | 387 | 125 | | 98.3 | | 0.792 | |
 
-Per country (prior review, test set): _[run]_ · Per dataset: _[run]_ · Top permutation importances: _[run]_ ·
-Promotion decision: _[run]_
+**Reading it honestly.** On prior-review tenders the model is **level with the baseline**: 0.4 days better MAE, a
+slightly better P80 (pinball 42.8 vs 44.0, coverage 0.81) but a worse median error (80.5 vs 70.5 days). On post-review
+tenders it is modestly better (MAE −0.8 days, median AE −5.2 days). Removing the governance features **improves**
+prior-review MAE by 5.7 days, so with 500 training rows WGI/CPIA add noise rather than signal; they are kept in the
+registered model because the promotion rule compares against the champion, but the ablation is the evidence that the
+governance hypothesis is not supported on this sample. Dropping DS04691 (FY2017–19) changes little (98.3). The P80
+range is well calibrated in both populations (0.81 / 0.83), which is what the planning screen relies on.
+
+Per dataset: all 125 prior-review test tenders are DS00005 (FY2020+). Per country (prior review, test countries with
+≥ 8 tenders): Nigeria MAE 48.5 (n 9), Kenya 75.0 (8), Bangladesh 81.0 (8), Nepal 126.1 (8), Tanzania 137.0 (11; P80
+coverage 0.55), country unknown 98.0 (35). Top permutation importances (MAE increase in days): procurement method 36.2,
+log contract value 4.4, log project commitment 3.7, country 3.4, earlier tenders in the project 2.3.
+**Promotion:** version 1 registered as `procurement.ml.tender_duration` and promoted to `champion` (no previous
+champion to beat). Share of actual durations below the predicted P20: 0.30 (target 0.20): the lower bound is a little
+optimistic.
 
 ## 2. Re-bid or cancellation risk (notebook 51, `ml.rebid_report`)
 
@@ -197,8 +215,7 @@ events from those passages from 118 to 136. Totals now: **1,198 lessons, 1,086 e
 amendment 223, cancellation 194, time extension 170, termination 76, re-bid 27, cost overrun 24, complaint 15,
 implementation delay 13); 3 linked to a contract.
 
-Ratings rows _[run]_ · conflicts by flag _[run]_ · lessons kept / rejected _[run]_ · events kept / rejected _[run]_ ·
-precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (20): _[your review]_
+Still open: precision on 20 lessons and 20 events (notebook 55 section 6 prints them): _[your review]_ · ratings sample check (20): _[your review]_
 
 ## 4. Retrieval and answers (notebook 61, `ml.rag_eval_results`)
 
@@ -247,25 +264,7 @@ Independent judge on 40 kept claims: **97.5% supported**. Prompt-injection test:
   refusals were all handled by the answer step and the verifier (3 / 3 correct). Proposed: calibrate the gate on the
   raw vector similarity instead of the hybrid score.
 
-**Evaluation set (notebook 61, stage = questions) [M]:** 49 questions (rating 3, lesson 30, tender design 5, contract 5,
-refusal 6); 35 synthetic ones **await review** in docs/11 (suggested: 18 keep, 2 keep?, 3 rephrase, 4 replace, 8 in
-near-duplicate pairs split across the two halves). Only 3 rating questions: an ICR outcome rating was found for 3 of
-16 projects (IEG reviews hold 12 more).
-
-All metrics are on the **test half**. The refusal threshold was set on the calibration half (checkpoint d change 4).
-
-| Test half | n | recall@5 | recall@10 | MRR | citation validity | claim support | refusal accuracy |
-|---|---|---|---|---|---|---|---|
-| All | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
-| Reviewed questions only | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ | _[run]_ |
-| By kind: rating / lesson / tender design (L2) / contract / refusal | _[run]_ | | | | | | |
-| India / China / Mali / Albania / Sri Lanka | _[run]_ | | | | | | |
-
-Retrieval path (hybrid or keyword fallback) _[run]_ · gate threshold and calibration-half pass rate _[run]_ ·
-claims removed: mechanical _[run]_ / verifier unsupported _[run]_ / no verdict _[run]_ · judge second opinion _[run]_ ·
-rating-answer accuracy _[run]_ · synthetic-question word overlap (median; count above 0.5) _[run]_ · prompt injection
-(quarantined? planted claim survived?) _[run]_ · notice chunks indexed (notebook 21) _[run]_ · hybrid identifier check
-(notebook 60) _[run]_ · Re-bid: IFB notices excluded as modifications (notebook 51) _[run]_
+**Evaluation set [M]:** frozen after your review (docs/11): **52 questions** (calibration 26, test 26; halves grouped by project), including 3 French-source questions added on 2026-10-22; the pre-review set is kept in `ml.rag_eval_questions_v1`. The 49-question run above is the first run on the reviewed set before the French questions were added.
 
 ### 4b. Retrieval-evaluation upgrade and languages (2026-10-22/23)
 
@@ -352,11 +351,47 @@ the original French text, so English words in the question do not match it. Next
 keyword matching too, or (production) a multilingual embedding model; and widen the French questions beyond 3 before
 drawing conclusions.
 
+**Final attempt on French retrieval (run 2026-10-23 17:51 UTC, one round, user decision) [M].** Two additions
+(`src/rag/multilingual.py`, unit-tested): (1) **English keyword matching for translated passages**: a BM25 index over
+all 9,564 passages that uses the English translation for the 196 translated ones; only translated passages are taken
+from it, each inserted at the rank it earned against the whole corpus (never above the vector hit it is aligned with);
+shown / cited text stays the original French. (2) **A French query pass**: when the package's country or a place named
+in the question is French-speaking (country list + Mali's regions), the question is translated to French (1 LLM call)
+and the same scopes are searched again and merged. It fired for 4 questions (the 3 French-source ones and one other
+Mali question).
+
+| Test half (n = 26) | before translation | after translation (embedding only) | **final (+ English keywords + French query)** |
+|---|---|---|---|
+| recall@5 strict / lenient | 0.52 / 0.78 | 0.52 / 0.78 | **0.57 / 0.83** |
+| recall@10 strict | 0.57 | 0.57 | 0.61 |
+| MRR strict / lenient | 0.40 / 0.70 | 0.41 / 0.70 | 0.42 / 0.71 |
+| tender design recall@5 strict / lenient (n 3) | 0 / 0.33 | 0 / 0.33 | **0.33 / 0.67** |
+| Mali recall@5 strict (n 7) | 0.43 | – | **0.57** |
+| claim support / citation validity | – | 0.905 / 1.00 | 0.893 / 1.00 (verifier removed 9 of 99 claims) |
+| independent judge on 40 kept claims | – | 100% | 97.5% |
+| refusal accuracy | 3 / 3 | 3 / 3 | 3 / 3 |
+| **French-source recall@5 (n 3)** | **0** | **0** | **0.33** |
+
+French-source questions in the final run: **Sikasso phase II lots (notice OP00217456) found at rank 3** (was outside
+the top 10); the six-lot works value (P160505 plan) and the P151449 ICR recommendation are **still missed**.
+The French question translation has a visible flaw: "track repair works" became "voie ferrée" (railway) instead of
+"pistes" (rural tracks), so the French pass can drift on domain words.
+
+**Conclusion, recorded as a known limitation:** French-source retrieval works only partly (1 of 3 French questions;
+n is tiny). Translation for embedding alone did nothing measurable; English keyword matching plus a French query pass
+recovered one notice. **Production fix [P]: a multilingual embedding model** (and multilingual keyword analysis), so
+French, Spanish, Portuguese and Arabic passages are matched in their own language without per-passage translation.
+
 **Gate behaviour after the fix [M].** Threshold **0.682** (cosine), chosen on the calibration half: 91% of answerable
 calibration questions pass (answerable p10 0.682, median 0.761, min 0.664); calibration off-topic scores 0.656, 0.689,
-0.698, so only 1 of 3 is below the threshold: **the gate separates on-topic from off-topic only weakly**. Test half:
-**1 of 23 answerable questions blocked** by the gate; **2 of 3 off-topic questions refused by the gate**, the third by
-the answer step (insufficient evidence), so refusal accuracy is 3 / 3. 5 questions were routed to completion reports.
+0.698, so only 1 of 3 is below the threshold: **the gate separates on-topic from off-topic only weakly** (the score
+distributions overlap: off-topic 0.66–0.70, answerable 0.66–0.86). Test half (same in the final run): **1 of 23
+answerable questions blocked** by the gate; **2 of 3 off-topic questions refused by the gate**, the third by the answer
+step (insufficient evidence), so refusal accuracy is 3 / 3. 5 questions were routed to completion reports.
+**What this means:** the gate is a weak first filter that saves an LLM call on clearly off-topic questions; the real
+protection against unsupported answers is the **answer step** (the model must say "insufficient evidence" when the
+passages do not answer) and the **claim verifier** (9 unsupported claims removed in the final run), which is why
+refusal accuracy is 3 / 3 even though the gate alone would catch only 2.
 
 ## 5. Early warnings and backtest (notebook 70)
 
