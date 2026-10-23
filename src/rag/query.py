@@ -53,7 +53,10 @@ national state provincial province regional sector road roads highway highways r
 transportation improvement improvements development connectivity network networks corridor corridors asset management
 infrastructure investment support second third ii iii iv sustainable integrated access cn ln""".split())
 _STOP = set("the a an of and or for to in on at by with from what which who how did does was were is are be been this "
-            "that these those about over time earlier final rating rated ratings progress report reports differ".split())
+            "that these those about over time earlier final rating rated ratings progress report reports differ "
+            # document-type words, capitalised in titles ("Implementation Completion and Results Report")
+            "implementation completion results status review appraisal document performance assessment paper "
+            "partnership framework strategy country plan procurement notice world bank ieg icr isr pad ppar".split())
 
 
 def _fold(text):
@@ -65,13 +68,30 @@ def _words(text):
     return re.findall(r"[a-z][a-z0-9]{2,}", _fold(text))
 
 
-def resolve_project_names(question, projects, max_hits=2):
+def _proper_nouns(question):
+    """Capitalised words that are not the first word of a sentence, folded to lower case: the names a user writes
+    ("Yunnan", "Sikasso", "Madhya Pradesh"). Common words in a project name ("safety", "maintenance", "center") are
+    written in lower case in a question, so they can never trigger a match on their own."""
+    out = set()
+    for m in re.finditer(r"(?<![\w-])([A-Z][A-Za-zÀ-ɏ]{2,})", question or ""):
+        before = (question[:m.start()]).rstrip()
+        if not before or before[-1] in ".?!:;\"(":
+            continue
+        out.add(_fold(m.group(1)))
+    return out - _STOP
+
+
+def resolve_project_names(question, projects, max_hits=2, exclude=()):
     """Project IDs whose NAME the question refers to. projects: dicts with project_id, project_name, in_slice.
-    A project matches when the question contains at least one DISTINCTIVE word of its name (not generic, in at most 3
-    project names); matches are ranked by how many of the name's words appear (distinctive words count double), demo
-    projects first on ties. Ambiguous results (more than max_hits equally good) return [] rather than a guess."""
+    A project matches only when the question contains, as a capitalised proper noun, a DISTINCTIVE word of its name
+    (not generic, found in at most 3 project names); matches are ranked by how many of the name's words appear
+    (distinctive words count double), demo projects first on ties. More than max_hits equally good matches -> []
+    (ambiguous: no filter rather than a wrong one). exclude: words that never identify a project on their own (country
+    names: "Mali" is in several project names; the country is not the project). Measured on the 52 evaluation
+    questions (docs/07)."""
+    proper = _proper_nouns(question) - {_fold(x) for x in exclude}
     qw = set(_words(question)) - _STOP
-    if not qw:
+    if not proper:
         return []
     names = {p["project_id"]: set(_words(p.get("project_name"))) for p in projects}
     df = {}
@@ -82,7 +102,7 @@ def resolve_project_names(question, projects, max_hits=2):
     for p in projects:
         ws = names[p["project_id"]]
         distinct = {w for w in ws if w not in _GENERIC and df.get(w, 0) <= 3}
-        hit_d = distinct & qw
+        hit_d = distinct & proper
         if not hit_d:
             continue
         hit_g = (ws - distinct) & qw

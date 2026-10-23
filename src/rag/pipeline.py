@@ -153,8 +153,8 @@ def run(pkg, tools, task="plan", question=None):
     # project NAMES matched to IDs, scope the search to those projects.
     search_q, style = qy.split_instructions(question) if task == "ask" else (None, "")
     named = re.findall(r"\bP\d{6}\b", question or "") if task == "ask" else []
-    resolved = [p for p in (tools.resolve_projects(search_q) if task == "ask" and tools.resolve_projects else [])
-                if p not in named]
+    # Names are resolved only when no project ID is written: a typed ID is exact, a name match is a best guess.
+    resolved = (tools.resolve_projects(search_q) if task == "ask" and tools.resolve_projects and not named else [])
     related = list(tools.related_projects(pkg, facts)) if task != "ask" else []
     projects = list(dict.fromkeys(([pkg["project_id"]] if pkg.get("project_id") else []) + named + resolved + related))
     # Rating questions about known projects: the extracted rating timeline, the final-outcome rule and conflict flags

@@ -107,3 +107,17 @@ def test_guardrail_sources_include_passage_date():
     out = gc.check_answer({"claims": [{"text": "The June 2016 ISR rated implementation progress Moderately Satisfactory.",
                                        "citations": ["E1"]}], "insufficient_evidence": False}, sources)
     assert len(out["claims"]) == 1 and not out["removed"]
+
+
+def test_name_resolution_needs_a_capitalised_distinctive_name():
+    projects = PROJECTS + [{"project_id": "P132982", "project_name": "Results-based Road Maintenance and Safety Project",
+                            "in_slice": False},
+                           {"project_id": "P160505", "project_name": "Mali - Rural Mobility and Connectivity Project",
+                            "in_slice": True}]
+    # document titles and common words never match a project
+    assert qy.resolve_project_names("What outcome rating did the Implementation Completion and Results Report give?",
+                                    projects) == []
+    assert qy.resolve_project_names("How was road safety and maintenance handled?", projects) == []
+    # a country is not a project
+    assert qy.resolve_project_names("What did contractors in Mali need to show?", projects, exclude={"mali"}) == []
+    assert qy.resolve_project_names(Q, projects, exclude={"china", "mali"}) == ["P132621"]

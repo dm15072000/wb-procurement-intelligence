@@ -74,7 +74,8 @@ class DatabricksBackend:
         self.hybrid_supported = None
         self._keyword_index = None
         self._en_keyword_index = None
-        self._project_names = None         # road-project names for name -> ID matching      # English-aware keyword index (translated passages), built on first use
+        self._project_names = None         # road-project names for name -> ID matching
+        self._country_words = set()      # English-aware keyword index (translated passages), built on first use
 
     # --- Foundation Model endpoints -------------------------------------------------------------------------------
     def embed(self, text):
@@ -157,7 +158,9 @@ class DatabricksBackend:
         if self._project_names is None:
             self._project_names = self.sql(f"""SELECT project_id, project_name, in_slice FROM {CATALOG}.silver.projects
                                                WHERE in_universe""", {})
-        return qy.resolve_project_names(question, self._project_names)
+            self._country_words = {w for r in self.sql(f"SELECT name FROM {CATALOG}.silver.countries", {})
+                                   for w in qy._words(r["name"])}
+        return qy.resolve_project_names(question, self._project_names, exclude=self._country_words)
 
     def rating_rows(self, project_ids):
         """Extracted ratings (gold.ratings) of these projects, oldest first."""
