@@ -135,7 +135,10 @@
         }
       ],
       "notebook_task": {
-        "notebook_path": "<GIT_FOLDER>/notebooks/55_extract_ratings_lessons_events"
+        "notebook_path": "<GIT_FOLDER>/notebooks/55_extract_ratings_lessons_events",
+        "base_parameters": {
+          "mode": "dry_run"
+        }
       }
     },
     {
@@ -149,7 +152,10 @@
         }
       ],
       "notebook_task": {
-        "notebook_path": "<GIT_FOLDER>/notebooks/60_embeddings_vector_index"
+        "notebook_path": "<GIT_FOLDER>/notebooks/60_embeddings_vector_index",
+        "base_parameters": {
+          "create_endpoint": "false"
+        }
       }
     },
     {
@@ -183,7 +189,10 @@
         }
       ],
       "notebook_task": {
-        "notebook_path": "<GIT_FOLDER>/notebooks/61_rag_evaluation"
+        "notebook_path": "<GIT_FOLDER>/notebooks/61_rag_evaluation",
+        "base_parameters": {
+          "stage": "full"
+        }
       }
     },
     {
