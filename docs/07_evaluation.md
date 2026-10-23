@@ -187,6 +187,16 @@ LLM replies, so the type values the LLM wrote are not stored anywhere (a gap in 
 mode **redo_bad_type** re-sends only the **176 passages** that had unknown types (176 calls, needs approval); after
 that, mapping types and re-validating costs nothing.
 
+**Done (2026-10-22, 176 calls approved):** redo_bad_type re-sent the 176 passages (0 errors); the LLM again wrote 299
+events with types outside the list, now logged by name. They are mostly **milestones, not problems**: completion 141,
+contract_signature 24, award 14, contract_award 12, procurement 12; project-level financial changes: restructuring 15,
+partial / loan cancellation 3; and one-offs (fraud, suspension, accident, ...). Mapped: rebidding / retendering →
+**rebid** (6); delay, construction / contract / completion delay and time_overrun → a new type **implementation_delay**
+(14; works delays, distinct from procurement delays). Re-validation of the stored replies (**no LLM call**) raised the
+events from those passages from 118 to 136. Totals now: **1,198 lessons, 1,086 events** (procurement delay 344,
+amendment 223, cancellation 194, time extension 170, termination 76, re-bid 27, cost overrun 24, complaint 15,
+implementation delay 13); 3 linked to a contract.
+
 Ratings rows _[run]_ · conflicts by flag _[run]_ · lessons kept / rejected _[run]_ · events kept / rejected _[run]_ ·
 precision on 20 lessons and 20 events: _[your review]_ · ratings sample check (20): _[your review]_
 
@@ -200,6 +210,42 @@ The test query returns the **same top 5** from Vector Search and from the cosine
 on this index, and a query naming a contract reference finds it in the top 5 (also with the keyword fallback). The
 first attempt failed before running any code: an unpinned `databricks-vectorsearch` install downgraded protobuf
 6.33.5 → 5.29.6 and the serverless Python kernel did not start; the client is now pinned to 0.66.
+
+**Evaluation run (notebook 61, frozen set of 49 reviewed questions, 2026-10-22) [M].** Retrieval path: **Vector
+Search hybrid**. Calibration half 26, **test half 23** (halves grouped by project). All figures below are on the TEST
+half only.
+
+| Test half | n | recall@5 | recall@10 | MRR | citation validity | claim support | answered | refusal accuracy |
+|---|---|---|---|---|---|---|---|---|
+| **All** | 23 | **0.55** | 0.60 | 0.45 | **1.00** | **0.90** | 0.85 | **1.00** (3 / 3) |
+| Lesson | 15 | **0.73** | 0.80 | 0.59 | 1.00 | 0.87 | 0.87 | – |
+| Tender design (L2) | 2 | 0 | 0 | 0 | 1.00 | 1.00 | 0.50 | – |
+| Contract | 2 | 0 (strict) | 0 | 0 | 1.00 | 1.00 | 1.00 | – |
+| Rating | 1 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | – |
+
+By country (test half, small n): Albania recall@5 1.00 (n 2), Mali 0.75 (4), India 0.57 (7), China 0.33 (6), Sri Lanka
+0 (1). Guardrails: 0 mechanical removals; the claim verifier checked 85 claims, kept 80 and **removed 5 unsupported**.
+Independent judge on 40 kept claims: **97.5% supported**. Prompt-injection test: the planted passage was
+**quarantined** and its claim did not survive.
+
+**What the misses are (each answer read):**
+- **Contract (2): correct answers, narrow gold.** Both answers are right (HAMP-GD-02's scope; HAMP-CS-01's amount and
+  selection method) and come from **Procurement Plan** passages that name the contract at rank 1 (and 2). The gold was the
+  single DESCRIBES passage, so strict recall is 0; counting any passage that names the contract, both are hits at rank 1.
+  The strict figure is the one reported.
+- **Rating (1): wrong answer.** "Negligible" instead of "Satisfactory" (P132833): retrieval returned 2017–18 ISRs, not
+  the ICR outcome passage, and the verifier accepted the claim because a retrieved passage supports *a* "Negligible"
+  rating. Fix proposed: answer rating questions from `gold.ratings` (regex-extracted, with source passage) or filter
+  retrieval to the ICR. Rating answer accuracy on the test half: 0 / 1.
+- **Tender design (2): one wrong, one refused.** Sichuan: retrieval found a sibling Lushan notice and the answer gave
+  the qualification criteria of a *different* contract (environmental monitoring) as if they applied to the equipment
+  tender; the claim was "supported" by that notice, so the verifier could not catch it. Uttar Pradesh: answered
+  "insufficient evidence"; the paraphrase ("a northern Indian state's traffic-safety study") was too far from the notice
+  to retrieve it.
+- **The retrieval gate does not bite with hybrid scores.** Calibration chose threshold 0.80 (all answerable questions
+  pass), but hybrid top scores are close to 1.0 for every question, so the gate blocked 0 of the refusal questions;
+  refusals were all handled by the answer step and the verifier (3 / 3 correct). Proposed: calibrate the gate on the
+  raw vector similarity instead of the hybrid score.
 
 **Evaluation set (notebook 61, stage = questions) [M]:** 49 questions (rating 3, lesson 30, tender design 5, contract 5,
 refusal 6); 35 synthetic ones **await review** in docs/11 (suggested: 18 keep, 2 keep?, 3 rephrase, 4 replace, 8 in
@@ -236,7 +282,16 @@ checklist of risk factors, never as a risk estimate. **Overdue flags mean "check
 matched contract past the model's P80 may be genuinely stuck, or its contract may simply not have joined to the notice
 (about one third of contracts match a notice), so each flag is a prompt to look, with its evidence shown.
 
-## 6. App setup (notebook 80)
+## 6. App setup (notebook 80) and deployment
 
 1 of 3 Free Edition apps used (`wbintelligence2`, stopped): there is room, nothing needs stopping or deleting. Grants
 are applied after the app is created (they need its service-principal ID).
+
+**Deployed 2026-10-22:** app `procurement-intelligence`
+(https://procurement-intelligence-7474649658971091.aws.databricksapps.com), source = the repo's Git folder, resources:
+the SQL warehouse (CAN_USE), the Llama 3.3 70B and gte-large-en endpoints (CAN_QUERY). Its service principal has USE /
+SELECT on silver, gold, docs, ml and ops, MODIFY on `ops.feedback` and `ops.rag_requests`, EXECUTE on the registered
+duration model (through the grants API: SQL "ON MODEL" is rejected) and CAN_USE on the Vector Search endpoint. The
+app's requirements pin the versions the model was trained with (scikit-learn 1.7.2, pandas 2.3.3, numpy 2.3.4,
+mlflow 3.12.0). Build and start succeeded; the pages were not yet opened (they need your sign-in). Apps used: 2 of 3.
+Apps stop 24 h after start: start it again shortly before the demo.
