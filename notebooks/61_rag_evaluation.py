@@ -57,9 +57,12 @@ import src.evaluation.metrics as ev
 import src.evaluation.questions as eq
 import src.guardrails.citation_check as gc
 import src.guardrails.claim_verifier as cv
-for m in (rt, kw, gc, cv, pl, dt, ev, eq):
+import src.evaluation.lenient as ln
+import src.chunking.language as lg
+for m in (rt, kw, gc, cv, pl, dt, ev, eq, ln, lg):
     importlib.reload(m)
 import mlflow
+from pyspark.sql import functions as F
 from databricks.sdk import WorkspaceClient
 
 CATALOG = "procurement"
@@ -230,7 +233,7 @@ tools = make_tools(min_score=0.0)
 results = []
 for q in questions:
     r = pl.run({"as_of": str(date.today())}, tools, task="ask", question=q["question"])
-    results.append({**q, "status": r.status, "retrieved": r.retrieved, "top_score": r.top_score,
+    results.append({**q, "status": r.status, "retrieved": r.retrieved, "top_score": r.top_score, "route": r.route,
                     "identifier_hit": r.identifier_hit, "guardrail_report": r.guardrail_report,
                     "claims": [{"text": c["text"], "citations": c["citations"]} for c in r.claims],
                     "cited_text": {eid: r.evidence[eid]["text"] for c in r.claims for eid in c["citations"] if eid in r.evidence},
@@ -257,6 +260,46 @@ spark.sql(f"CREATE TABLE IF NOT EXISTS {O}.config (key STRING, value STRING, upd
 spark.sql(f"DELETE FROM {O}.config WHERE key = 'rag_min_score'")
 spark.sql(f"INSERT INTO {O}.config VALUES ('rag_min_score', '{threshold}', current_timestamp())")
 print(json.dumps(gate_report, indent=2))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4b. Lenient recall: did retrieval find ANY passage that contains the answer? (2026-10-22)
+# MAGIC Strict recall counts only the gold passage. The same fact is often stated elsewhere (an ICR lesson repeated in the
+# MAGIC IEG review, a contract named in the Procurement Plan), so for every TEST question and every retrieved passage
+# MAGIC (top 10) outside the gold set, an LLM judge compares it with the gold passage: does it contain the answer?
+# MAGIC Judgements are cached in `ml.rag_eval_lenient_judgments` (re-used while the question text is unchanged).
+# MAGIC Also: the language of each gold passage, so French-source questions can be reported on their own.
+
+# COMMAND ----------
+
+spark.sql(f"""CREATE TABLE IF NOT EXISTS {ML}.rag_eval_lenient_judgments
+              (qid STRING, question STRING, chunk_id STRING, verdict BOOLEAN, raw STRING, judged_at TIMESTAMP)""")
+qtext = {x["qid"]: x["question"] for x in results}
+judged = {(r.qid, r.chunk_id): r.verdict
+          for r in spark.table(f"{ML}.rag_eval_lenient_judgments").collect() if qtext.get(r.qid) == r.question}
+test_rows = [x for x in results if x["split"] == "test"]
+need_ids = {c for x in results for c in (x["gold"] or [])[:1] + x["retrieved"][:10]}
+texts = {r.chunk_id: r.text for r in spark.table(f"{D}.chunk_embeddings").select("chunk_id", "text")
+         .where(F.col("chunk_id").isin(list(need_ids))).collect()} if need_ids else {}
+for x in results:
+    x["gold_lang"] = lg.detect(texts.get((x["gold"] or [None])[0])) if x["gold"] else None
+pairs = ln.to_judge(test_rows, judged, k=10)
+new = []
+by_qid = {x["qid"]: x for x in results}
+for qid, cid in pairs:
+    x = by_qid[qid]
+    raw = backend.chat(ln.build_messages(x["question"], texts.get(x["gold"][0]), texts.get(cid)), max_tokens=3)
+    v = ln.parse(raw)
+    judged[(qid, cid)] = v
+    new.append((qid, x["question"], cid, v, (raw or "")[:20], datetime.now(timezone.utc)))
+if new:
+    spark.createDataFrame(new, "qid string, question string, chunk_id string, verdict boolean, raw string, judged_at timestamp") \
+         .write.mode("append").saveAsTable(f"{ML}.rag_eval_lenient_judgments")
+lenient_info = {"pairs_judged_this_run": len(new), "cached": len(pairs) == 0 and len(judged) > 0,
+                "yes": sum(v is True for (q, c), v in judged.items() if q in {x["qid"] for x in test_rows}),
+                "unparsed": sum(v is None for _, _, _, v, _, _ in new)}
+print(lenient_info)
 
 # COMMAND ----------
 
@@ -315,12 +358,40 @@ mechanical_removed = sum(r.get("removed", 0) for r in reports) - verifier_totals
 # COMMAND ----------
 
 summary_test = ev.summarise(test_rows, "country_iso3")
+lenient_test = ln.lenient_rows(test_rows, judged)
+summary_test_lenient = ev.summarise(lenient_test, "country_iso3")
+by_kind_lenient = {k: ev.summarise([x for x in lenient_test if x["kind"] == k])["all"]
+                   for k in kinds if any(x["kind"] == k for x in test_rows)}
+# French-source questions (gold passage detected as French), wherever they sit; strict and lenient
+fr_rows = [x for x in test_rows if x.get("gold_lang") == "fr"]
+french = {"qids": [x["qid"] for x in fr_rows],
+          "strict": ev.summarise(fr_rows)["all"] if fr_rows else None,
+          "lenient": ev.summarise(ln.lenient_rows(fr_rows, judged))["all"] if fr_rows else None,
+          "retrieved_gold_rank": {x["qid"]: (x["retrieved"].index(g) + 1 if (g := next((c for c in x["retrieved"]
+                                  if c in (x["gold"] or [])), None)) else None) for x in fr_rows}}
+# Gate behaviour (pure vector similarity, calibrated on the calibration half)
+def _q(vals, p):
+    vals = sorted(vals)
+    return round(vals[min(len(vals) - 1, int(p * len(vals)))], 4) if vals else None
+cal_ans = [x["top_score"] for x in calib_rows if not x["should_refuse"]]
+cal_ref = [x["top_score"] for x in calib_rows if x["should_refuse"]]
+gate_behaviour = {"score": "pure vector similarity (max over retrieved passages and scopes)", "threshold": threshold,
+                  "calibration_answerable_p10_p50_min": [_q(cal_ans, 0.1), _q(cal_ans, 0.5), min(cal_ans, default=None)],
+                  "calibration_refusal_scores": sorted(round(s, 4) for s in cal_ref),
+                  "test_refusals_blocked_by_gate": sum(1 for x in test_rows if x["should_refuse"]
+                                                       and x["status"] == "refused_no_evidence"),
+                  "test_refusals": sum(1 for x in test_rows if x["should_refuse"]),
+                  "test_answerable_blocked_by_gate": sum(1 for x in test_rows if not x["should_refuse"]
+                                                         and x["status"] == "refused_no_evidence"),
+                  "routed_to_completion_reports": sum(1 for x in results if x.get("route"))}
 summary_reviewed = ev.summarise([x for x in test_rows if x["reviewed"]])["all"]
 by_kind = {k: ev.summarise([x for x in test_rows if x["kind"] == k])["all"] for k in kinds if any(x["kind"] == k for x in test_rows)}
 run_ts = datetime.now(timezone.utc)
 final = {"retrieval_path": retrieval_path, "n_questions": len(results), "n_test": len(test_rows),
          "n_calibration": len(calib_rows), "gate_calibrated_on_calibration_half": gate_report,
          "overall_test": summary_test["all"], "reviewed_only_test": summary_reviewed, "by_kind_test": by_kind,
+         "overall_test_lenient": summary_test_lenient["all"], "by_kind_test_lenient": by_kind_lenient,
+         "lenient_judgements": lenient_info, "french_source_test": french, "gate_behaviour": gate_behaviour,
          "by_country_test": {k: v for k, v in summary_test.items() if k != "all"},
          "guardrail_removals_test": {"mechanical": mechanical_removed, "verifier": verifier_totals},
          "judge_second_opinion": {"share_supported": faithfulness, "n_judged": len(judged)},

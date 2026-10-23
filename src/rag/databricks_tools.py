@@ -32,6 +32,16 @@ def _fmt_usd(x):
     return f"USD {x:,.0f}" if x is not None else "amount not recorded"
 
 
+def attach_vector_scores(hybrid_hits, vector_hits):
+    """The retrieval gate must use PURE vector similarity (2026-10-22): a HYBRID score mixes in keyword matching and was
+    close to 1.0 for every question, so the gate never refused anything. A plain vector query over the same scope gives
+    each hit its raw similarity (vector_score), and every hit also carries the best raw similarity of the scope
+    (vector_top), even when that passage did not make the hybrid top k."""
+    vs = {h["chunk_id"]: h.get("score") for h in vector_hits}
+    top = max((s for s in vs.values() if s is not None), default=None)
+    return [dict(h, vector_score=vs.get(h["chunk_id"]), vector_top=top) for h in hybrid_hits]
+
+
 class DatabricksBackend:
     """sql: callable(query, params) -> list[dict]. workspace_client: databricks.sdk.WorkspaceClient.
     vs_index: a databricks.vector_search index object, or None to use the cosine fallback over fallback_rows
@@ -76,9 +86,10 @@ class DatabricksBackend:
             try:
                 hits = self._vs(vec, filters, k, text, hybrid=True)
                 self.hybrid_supported = True
-                return hits
             except Exception:
                 self.hybrid_supported = False      # remembered: keyword_search takes over the keyword side
+            else:
+                return attach_vector_scores(hits, self._vs(vec, filters, k))
         return self._vs(vec, filters, k)
 
     def needs_keyword_fallback(self):

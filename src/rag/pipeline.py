@@ -52,7 +52,8 @@ class Result:
     guardrail_report: dict = field(default_factory=dict)
     injection_flags: dict = field(default_factory=dict)  # chunk_id -> phrases; these chunks are quarantined
     retrieved: list = field(default_factory=list)        # ranked chunk_ids (for retrieval metrics)
-    top_score: float = 0.0                               # best raw similarity (to calibrate the retrieval gate)
+    top_score: float = 0.0                               # best PURE vector similarity (calibrates the retrieval gate)
+    route: Optional[list] = None                         # document types the question was routed to, if any
     identifier_hit: bool = False                         # a queried project ID / reference was found verbatim
     timings: dict = field(default_factory=dict)
 
@@ -73,22 +74,28 @@ def _scope_search(tools, vec, query, filters):
     return rt.hybrid_merge(vh, kh)
 
 
-def retrieve(query, pkg, tools, project_ids=(), contract_keys=(), task="ask"):
+def retrieve(query, pkg, tools, project_ids=(), contract_keys=(), task="ask", doc_types=None):
     """Steps 3-6: project-scoped, lessons-scoped and (for planning) notice-scoped hybrid search, DESCRIBES links,
-    merge, identifier marking, rerank."""
+    merge, identifier marking, rerank. doc_types (question routing) restricts the project and open scopes; if the
+    restricted search finds nothing, it is repeated without the restriction."""
     vec = tools.embed(query)
     as_of = pkg.get("as_of")
     lists = []
     if project_ids:
-        lists.append(("project_scope",
-                      _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids))))
+        hits = _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids, doc_types=doc_types))
+        if doc_types and not hits:
+            hits = _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids))
+        lists.append(("project_scope", hits))
     lists.append(("lessons_scope",
                   _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=rt.LESSON_DOC_TYPES))))
     if task == "plan":   # tender design (L2): past REOI / IFB text with scope and qualification criteria
         lists.append(("notice_scope",
                       _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=[rt.NOTICE_DOC_TYPE]))))
     if not project_ids:
-        lists.append(("open_scope", _scope_search(tools, vec, query, rt.filters_for(as_of))))
+        hits = _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=doc_types))
+        if doc_types and not hits:
+            hits = _scope_search(tools, vec, query, rt.filters_for(as_of))
+        lists.append(("open_scope", hits))
     if contract_keys:
         lists.append(("describes_link", tools.describes_hits(list(contract_keys))))
     merged = rt.merge(*lists)
@@ -111,15 +118,17 @@ def run(pkg, tools, task="plan", question=None):
     related = list(tools.related_projects(pkg, facts)) if task != "ask" else []
     projects = list(dict.fromkeys(([pkg["project_id"]] if pkg.get("project_id") else []) + named + related))
     query = question if task == "ask" else package_text(pkg)
+    route = rt.route_doc_types(question) if task == "ask" else None
     t1 = time.time()
-    hits = retrieve(query, pkg, tools, projects, contract_keys, task)
+    hits = retrieve(query, pkg, tools, projects, contract_keys, task, doc_types=route)
     timings["retrieval_s"] = round(time.time() - t1, 2)
-    # Gate: the best RAW similarity must clear the threshold, unless a queried identifier (project ID, contract
-    # reference) was found verbatim: an exact code match is evidence even when embeddings rate it low.
-    sims = [h["vector_score"] if h.get("vector_score") is not None else h.get("score")
-            for h in hits if "describes_link" not in (h.get("found_by") or [])]
+    # Gate: the best PURE vector similarity must clear the threshold, unless a queried identifier (project ID,
+    # contract reference) was found verbatim: an exact code match is evidence even when embeddings rate it low.
+    # Keyword-only hits and combined hybrid scores never count (they were ~1.0 for every question, 2026-10-22).
+    sims = [s for h in hits if "describes_link" not in (h.get("found_by") or [])
+            for s in (h.get("vector_score"), h.get("vector_top")) if s is not None]
     result = Result(status="answered", retrieved=[h["chunk_id"] for h in hits], timings=timings,
-                    top_score=max((s for s in sims if s is not None), default=0.0),
+                    top_score=max(sims, default=0.0), route=route,
                     identifier_hit=any(h.get("id_match") for h in hits))
     if not (result.top_score >= tools.min_score or result.identifier_hit):
         result.status = "refused_no_evidence"

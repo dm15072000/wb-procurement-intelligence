@@ -7,11 +7,23 @@ bonus for more independent sources (IEG > ICR > ISR) and for lessons sections, a
 so one long report cannot fill every slot.
 """
 import math
+import re
 from datetime import date
 
 NOTICE_DOC_TYPE = "Procurement Notice"   # REOI / IFB notice text indexed for slice projects (change 3)
 LESSON_DOC_TYPES = ["Implementation Completion and Results Report", "Implementation Completion Report Review",
                     "Project Performance Assessment Report"]
+# Question-type routing (2026-10-22): a FINAL outcome / rating question is answered from the completion and evaluation
+# reports, not from progress reports. In the first evaluation an ICR outcome question pulled 2017-18 ISRs and answered
+# with a different rating.
+OUTCOME_DOC_TYPES = LESSON_DOC_TYPES
+_OUTCOME_Q = re.compile(r"\b(outcome|overall rating|rated|rating (of|did|was|given)|final (result|outcome|rating)|"
+                        r"ieg|ppar|completion report|achievement of (the )?(pdo|development objective))\b", re.I)
+
+
+def route_doc_types(question):
+    """Document types a question should be answered from, or None (no routing)."""
+    return list(OUTCOME_DOC_TYPES) if _OUTCOME_Q.search(question or "") else None
 AUTHORITY_BONUS = {"Project Performance Assessment Report": 0.03, "Implementation Completion Report Review": 0.03,
                    "Implementation Completion and Results Report": 0.02,
                    "Implementation Status and Results Report": 0.0, "Project Appraisal Document": 0.01}
@@ -97,7 +109,10 @@ def hybrid_merge(vector_hits, keyword_hits, alpha=HYBRID_ALPHA):
     vector_score for the retrieval gate. Hits from Vector Search HYBRID mode (flag 'hybrid') keep their own score."""
     by_id = {}
     for h in vector_hits:
-        by_id[h["chunk_id"]] = dict(h, vector_score=h.get("score"), kw_score=None)
+        # A Vector Search HYBRID hit's score is the combined score; its raw vector similarity (if known) is already in
+        # h["vector_score"], attached by the backend from a plain vector query. Never treat the combined score as one.
+        vs = h.get("vector_score") if h.get("hybrid") else h.get("score")
+        by_id[h["chunk_id"]] = dict(h, vector_score=vs, kw_score=None)
     for h in keyword_hits:
         cur = by_id.get(h["chunk_id"])
         if cur:
