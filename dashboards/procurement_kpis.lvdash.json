@@ -1,0 +1,3660 @@
+{
+ "datasets": [
+  {
+   "name": "source_refresh",
+   "displayName": "Last refresh per source",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_source_refresh"
+   ]
+  },
+  {
+   "name": "dq_runs",
+   "displayName": "Data-quality gate runs",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_dq_runs ORDER BY run_ts DESC"
+   ]
+  },
+  {
+   "name": "dq_latest",
+   "displayName": "Data-quality gate, latest run",
+   "queryLines": [
+    "SELECT failed AS failed_checks, passed AS passed_checks FROM procurement.ops.kpi_dq_runs ORDER BY run_ts DESC LIMIT 1"
+   ]
+  },
+  {
+   "name": "coverage_fy",
+   "displayName": "Contract coverage by FY",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_coverage_fy ORDER BY fiscal_year"
+   ]
+  },
+  {
+   "name": "missing_rates",
+   "displayName": "Missing-value rates",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_missing_rates ORDER BY source_dataset"
+   ]
+  },
+  {
+   "name": "duration_model",
+   "displayName": "Duration model vs baseline",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_duration_model"
+   ]
+  },
+  {
+   "name": "duration_main",
+   "displayName": "Duration model, prior review (champion)",
+   "queryLines": [
+    "SELECT model_mae_days, baseline_mae_days, p80_coverage FROM procurement.ops.kpi_duration_model WHERE population = 'Prior review (main)'"
+   ]
+  },
+  {
+   "name": "rebid_rates",
+   "displayName": "Re-bid or cancellation rates",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_rebid_rates ORDER BY scope"
+   ]
+  },
+  {
+   "name": "eval_runs",
+   "displayName": "Evaluation runs",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_eval_runs ORDER BY run_ts DESC"
+   ]
+  },
+  {
+   "name": "eval_latest",
+   "displayName": "Evaluation, latest run",
+   "queryLines": [
+    "SELECT recall5_strict, recall5_lenient, citation_validity, claim_support, refusal_accuracy, claims_removed_mechanical + claims_removed_verifier AS claims_removed FROM procurement.ops.kpi_eval_runs ORDER BY run_ts DESC LIMIT 1"
+   ]
+  },
+  {
+   "name": "eval_trend",
+   "displayName": "Recall@5 trend",
+   "queryLines": [
+    "SELECT run_ts, 'strict (gold passage)' AS measure, recall5_strict AS recall_at_5 FROM procurement.ops.kpi_eval_runs UNION ALL SELECT run_ts, 'lenient (any passage with the answer)', recall5_lenient FROM procurement.ops.kpi_eval_runs WHERE recall5_lenient IS NOT NULL"
+   ]
+  },
+  {
+   "name": "usage_daily",
+   "displayName": "Requests per day (test usage)",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_usage_daily ORDER BY day DESC"
+   ]
+  },
+  {
+   "name": "usage_totals",
+   "displayName": "Usage totals (test usage)",
+   "queryLines": [
+    "SELECT (SELECT coalesce(sum(requests), 0) FROM procurement.ops.kpi_usage_daily) AS requests, (SELECT coalesce(sum(llm_calls), 0) FROM procurement.ops.kpi_usage_daily) AS llm_calls, (SELECT coalesce(sum(thumbs_up), 0) FROM procurement.ops.kpi_feedback_daily) AS thumbs_up, (SELECT coalesce(sum(thumbs_down), 0) FROM procurement.ops.kpi_feedback_daily) AS thumbs_down"
+   ]
+  },
+  {
+   "name": "feedback_daily",
+   "displayName": "Feedback per day (test usage)",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_feedback_daily ORDER BY day DESC"
+   ]
+  },
+  {
+   "name": "targets",
+   "displayName": "Proposed pilot targets",
+   "queryLines": [
+    "SELECT * FROM procurement.ops.kpi_proposed_targets"
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "health",
+   "displayName": "1. Data health",
+   "layout": [
+    {
+     "widget": {
+      "name": "text_01",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Data health",
+        "Coverage is **partial, not missing** before FY2020: a zero or a low count in a partial year is *not* evidence of no activity. Coverage = share of published Contract Award notices matched in the contract data. The data-quality gate is notebook 12; models do not run on a refresh that failed it."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "table_02",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "source_refresh",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "layer",
+           "expression": "`layer`"
+          },
+          {
+           "name": "last_refresh",
+           "expression": "`last_refresh`"
+          },
+          {
+           "name": "row_count",
+           "expression": "`row_count`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "source",
+          "displayName": "source",
+          "title": "source",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "layer",
+          "displayName": "layer",
+          "title": "layer",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 1,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "last_refresh",
+          "displayName": "last_refresh",
+          "title": "last_refresh",
+          "type": "datetime",
+          "displayAs": "datetime",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "dateTimeFormat": "YYYY-MM-DD HH:mm"
+         },
+         {
+          "fieldName": "row_count",
+          "displayName": "row_count",
+          "title": "row_count",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Last refresh and row count per source"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_03",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "dq_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "failed_checks",
+           "expression": "`failed_checks`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "failed_checks",
+         "displayName": "Failed checks (latest gate run)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Failed checks (latest gate run)"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_04",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "dq_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "passed_checks",
+           "expression": "`passed_checks`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "passed_checks",
+         "displayName": "Passed checks (latest gate run)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Passed checks (latest gate run)"
+       }
+      }
+     },
+     "position": {
+      "x": 5,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "table_05",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "dq_runs",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "run_ts",
+           "expression": "`run_ts`"
+          },
+          {
+           "name": "checks",
+           "expression": "`checks`"
+          },
+          {
+           "name": "passed",
+           "expression": "`passed`"
+          },
+          {
+           "name": "failed",
+           "expression": "`failed`"
+          },
+          {
+           "name": "gate",
+           "expression": "`gate`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "run_ts",
+          "displayName": "run_ts",
+          "title": "run_ts",
+          "type": "datetime",
+          "displayAs": "datetime",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "dateTimeFormat": "YYYY-MM-DD HH:mm"
+         },
+         {
+          "fieldName": "checks",
+          "displayName": "checks",
+          "title": "checks",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "passed",
+          "displayName": "passed",
+          "title": "passed",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "failed",
+          "displayName": "failed",
+          "title": "failed",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "gate",
+          "displayName": "gate",
+          "title": "gate",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 4,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Data-quality gate history"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 5,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "bar_06",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "coverage_fy",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "fiscal_year",
+           "expression": "`fiscal_year`"
+          },
+          {
+           "name": "coverage_share",
+           "expression": "`coverage_share`"
+          },
+          {
+           "name": "coverage_status",
+           "expression": "`coverage_status`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "fiscal_year",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "fiscal_year"
+        },
+        "y": {
+         "fieldName": "coverage_share",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "coverage_share"
+        },
+        "color": {
+         "fieldName": "coverage_status",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "coverage_status"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Contract coverage by fiscal year",
+        "showDescription": true,
+        "description": "Share of published award notices matched in the contract data"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 8,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "table_07",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "coverage_fy",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "fiscal_year",
+           "expression": "`fiscal_year`"
+          },
+          {
+           "name": "coverage_status",
+           "expression": "`coverage_status`"
+          },
+          {
+           "name": "n_contracts",
+           "expression": "`n_contracts`"
+          },
+          {
+           "name": "award_notices",
+           "expression": "`award_notices`"
+          },
+          {
+           "name": "matched",
+           "expression": "`matched`"
+          },
+          {
+           "name": "coverage_share",
+           "expression": "`coverage_share`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "fiscal_year",
+          "displayName": "fiscal_year",
+          "title": "fiscal_year",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "coverage_status",
+          "displayName": "coverage_status",
+          "title": "coverage_status",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 1,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "n_contracts",
+          "displayName": "n_contracts",
+          "title": "n_contracts",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "award_notices",
+          "displayName": "award_notices",
+          "title": "award_notices",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "matched",
+          "displayName": "matched",
+          "title": "matched",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "coverage_share",
+          "displayName": "coverage_share",
+          "title": "coverage_share",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Coverage by fiscal year (status label on every row)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 8,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "table_08",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "missing_rates",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "source_dataset",
+           "expression": "`source_dataset`"
+          },
+          {
+           "name": "contracts",
+           "expression": "`contracts`"
+          },
+          {
+           "name": "signing_date_missing",
+           "expression": "`signing_date_missing`"
+          },
+          {
+           "name": "amount_missing",
+           "expression": "`amount_missing`"
+          },
+          {
+           "name": "category_missing",
+           "expression": "`category_missing`"
+          },
+          {
+           "name": "method_missing",
+           "expression": "`method_missing`"
+          },
+          {
+           "name": "review_type_unknown",
+           "expression": "`review_type_unknown`"
+          },
+          {
+           "name": "country_missing",
+           "expression": "`country_missing`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "source_dataset",
+          "displayName": "source_dataset",
+          "title": "source_dataset",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "contracts",
+          "displayName": "contracts",
+          "title": "contracts",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "signing_date_missing",
+          "displayName": "signing_date_missing",
+          "title": "signing_date_missing",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "amount_missing",
+          "displayName": "amount_missing",
+          "title": "amount_missing",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "category_missing",
+          "displayName": "category_missing",
+          "title": "category_missing",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "method_missing",
+          "displayName": "method_missing",
+          "title": "method_missing",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "review_type_unknown",
+          "displayName": "review_type_unknown",
+          "title": "review_type_unknown",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 6,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "country_missing",
+          "displayName": "country_missing",
+          "title": "country_missing",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 7,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Missing-value rates, road-sector contracts, per dataset",
+        "showDescription": true,
+        "description": "review_type 'unknown' is stored, never guessed (DS01004 has no review-type field)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 14,
+      "width": 6,
+      "height": 4
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS"
+  },
+  {
+   "name": "models",
+   "displayName": "2. Model quality",
+   "layout": [
+    {
+     "widget": {
+      "name": "text_09",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Model quality",
+        "Duration model: quantile GBT vs a median baseline on the latest time slice (held out). Main population: prior-review contracts. Re-bid or cancellation rates are shown with and without project P157054, whose batch re-advertisements dominate the count."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_10",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "duration_main",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "model_mae_days",
+           "expression": "`model_mae_days`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "model_mae_days",
+         "displayName": "Model MAE (days), prior review"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Model MAE (days), prior review"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_11",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "duration_main",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "baseline_mae_days",
+           "expression": "`baseline_mae_days`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "baseline_mae_days",
+         "displayName": "Baseline MAE (days), prior review"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Baseline MAE (days), prior review"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_12",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "duration_main",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "p80_coverage",
+           "expression": "`p80_coverage`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "p80_coverage",
+         "displayName": "P80 coverage (target 0.7-0.9)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "P80 coverage (target 0.7-0.9)"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "table_13",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "duration_model",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "population",
+           "expression": "`population`"
+          },
+          {
+           "name": "n_test",
+           "expression": "`n_test`"
+          },
+          {
+           "name": "test_from",
+           "expression": "`test_from`"
+          },
+          {
+           "name": "baseline_mae_days",
+           "expression": "`baseline_mae_days`"
+          },
+          {
+           "name": "model_mae_days",
+           "expression": "`model_mae_days`"
+          },
+          {
+           "name": "p80_coverage",
+           "expression": "`p80_coverage`"
+          },
+          {
+           "name": "registered_version",
+           "expression": "`registered_version`"
+          },
+          {
+           "name": "promoted_to_champion",
+           "expression": "`promoted_to_champion`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "population",
+          "displayName": "population",
+          "title": "population",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "n_test",
+          "displayName": "n_test",
+          "title": "n_test",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "test_from",
+          "displayName": "test_from",
+          "title": "test_from",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 2,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "baseline_mae_days",
+          "displayName": "baseline_mae_days",
+          "title": "baseline_mae_days",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "model_mae_days",
+          "displayName": "model_mae_days",
+          "title": "model_mae_days",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "p80_coverage",
+          "displayName": "p80_coverage",
+          "title": "p80_coverage",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "registered_version",
+          "displayName": "registered_version",
+          "title": "registered_version",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 6,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "promoted_to_champion",
+          "displayName": "promoted_to_champion",
+          "title": "promoted_to_champion",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 7,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Duration model vs baseline (latest report; champion version)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 6,
+      "height": 4
+     }
+    },
+    {
+     "widget": {
+      "name": "bar_14",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "rebid_rates",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "scope",
+           "expression": "`scope`"
+          },
+          {
+           "name": "rebid_or_cancellation_rate",
+           "expression": "`rebid_or_cancellation_rate`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "scope",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "scope"
+        },
+        "y": {
+         "fieldName": "rebid_or_cancellation_rate",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "rebid_or_cancellation_rate"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Re-bid or cancellation rate"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 2,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "table_15",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "rebid_rates",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "scope",
+           "expression": "`scope`"
+          },
+          {
+           "name": "tenders",
+           "expression": "`tenders`"
+          },
+          {
+           "name": "rebid_rate",
+           "expression": "`rebid_rate`"
+          },
+          {
+           "name": "re_advertised_new_ref_rate",
+           "expression": "`re_advertised_new_ref_rate`"
+          },
+          {
+           "name": "cancellation_rate",
+           "expression": "`cancellation_rate`"
+          },
+          {
+           "name": "rebid_or_cancellation_rate",
+           "expression": "`rebid_or_cancellation_rate`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "scope",
+          "displayName": "scope",
+          "title": "scope",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "tenders",
+          "displayName": "tenders",
+          "title": "tenders",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "rebid_rate",
+          "displayName": "rebid_rate",
+          "title": "rebid_rate",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "re_advertised_new_ref_rate",
+          "displayName": "re_advertised_new_ref_rate",
+          "title": "re_advertised_new_ref_rate",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "cancellation_rate",
+          "displayName": "cancellation_rate",
+          "title": "cancellation_rate",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "rebid_or_cancellation_rate",
+          "displayName": "rebid_or_cancellation_rate",
+          "title": "rebid_or_cancellation_rate",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Re-bid, re-advertisement and cancellation rates"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 9,
+      "width": 4,
+      "height": 6
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS"
+  },
+  {
+   "name": "assistant",
+   "displayName": "3. Assistant quality",
+   "layout": [
+    {
+     "widget": {
+      "name": "text_16",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Assistant quality",
+        "Frozen evaluation set, **test half only** (the refusal threshold is calibrated on the other half). Strict recall counts only the gold passage; lenient recall counts any retrieved passage an LLM judge finds contains the answer. Claims removed = mechanical citation checks + claim-support verifier."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_17",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "recall5_strict",
+           "expression": "`recall5_strict`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "recall5_strict",
+         "displayName": "Recall@5 strict"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Recall@5 strict"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_18",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "recall5_lenient",
+           "expression": "`recall5_lenient`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "recall5_lenient",
+         "displayName": "Recall@5 lenient"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Recall@5 lenient"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_19",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "citation_validity",
+           "expression": "`citation_validity`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "citation_validity",
+         "displayName": "Citation validity"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Citation validity"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_20",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "claim_support",
+           "expression": "`claim_support`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "claim_support",
+         "displayName": "Claim support"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Claim support"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_21",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "claims_removed",
+           "expression": "`claims_removed`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "claims_removed",
+         "displayName": "Claims removed by guardrails"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Claims removed by guardrails"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_22",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_latest",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "refusal_accuracy",
+           "expression": "`refusal_accuracy`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "refusal_accuracy",
+         "displayName": "Refusal accuracy"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Refusal accuracy"
+       }
+      }
+     },
+     "position": {
+      "x": 5,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "line_23",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_trend",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "run_ts",
+           "expression": "`run_ts`"
+          },
+          {
+           "name": "recall_at_5",
+           "expression": "`recall_at_5`"
+          },
+          {
+           "name": "measure",
+           "expression": "`measure`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "run_ts",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "run_ts"
+        },
+        "y": {
+         "fieldName": "recall_at_5",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "recall_at_5"
+        },
+        "color": {
+         "fieldName": "measure",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "measure"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Recall@5 across evaluation runs"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 6,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "table_24",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eval_runs",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "run_ts",
+           "expression": "`run_ts`"
+          },
+          {
+           "name": "n_test",
+           "expression": "`n_test`"
+          },
+          {
+           "name": "recall5_strict",
+           "expression": "`recall5_strict`"
+          },
+          {
+           "name": "recall5_lenient",
+           "expression": "`recall5_lenient`"
+          },
+          {
+           "name": "mrr_strict",
+           "expression": "`mrr_strict`"
+          },
+          {
+           "name": "citation_validity",
+           "expression": "`citation_validity`"
+          },
+          {
+           "name": "claim_support",
+           "expression": "`claim_support`"
+          },
+          {
+           "name": "refusal_accuracy",
+           "expression": "`refusal_accuracy`"
+          },
+          {
+           "name": "answered_share",
+           "expression": "`answered_share`"
+          },
+          {
+           "name": "claims_removed_mechanical",
+           "expression": "`claims_removed_mechanical`"
+          },
+          {
+           "name": "claims_removed_verifier",
+           "expression": "`claims_removed_verifier`"
+          },
+          {
+           "name": "claims_verified",
+           "expression": "`claims_verified`"
+          },
+          {
+           "name": "gate_threshold",
+           "expression": "`gate_threshold`"
+          },
+          {
+           "name": "retrieval_path",
+           "expression": "`retrieval_path`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "run_ts",
+          "displayName": "run_ts",
+          "title": "run_ts",
+          "type": "datetime",
+          "displayAs": "datetime",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "dateTimeFormat": "YYYY-MM-DD HH:mm"
+         },
+         {
+          "fieldName": "n_test",
+          "displayName": "n_test",
+          "title": "n_test",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "recall5_strict",
+          "displayName": "recall5_strict",
+          "title": "recall5_strict",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "recall5_lenient",
+          "displayName": "recall5_lenient",
+          "title": "recall5_lenient",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "mrr_strict",
+          "displayName": "mrr_strict",
+          "title": "mrr_strict",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "citation_validity",
+          "displayName": "citation_validity",
+          "title": "citation_validity",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "claim_support",
+          "displayName": "claim_support",
+          "title": "claim_support",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 6,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "refusal_accuracy",
+          "displayName": "refusal_accuracy",
+          "title": "refusal_accuracy",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 7,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "answered_share",
+          "displayName": "answered_share",
+          "title": "answered_share",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 8,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "claims_removed_mechanical",
+          "displayName": "claims_removed_mechanical",
+          "title": "claims_removed_mechanical",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 9,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "claims_removed_verifier",
+          "displayName": "claims_removed_verifier",
+          "title": "claims_removed_verifier",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 10,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "claims_verified",
+          "displayName": "claims_verified",
+          "title": "claims_verified",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 11,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "gate_threshold",
+          "displayName": "gate_threshold",
+          "title": "gate_threshold",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 12,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "retrieval_path",
+          "displayName": "retrieval_path",
+          "title": "retrieval_path",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 13,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "All evaluation runs"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 6,
+      "height": 5
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS"
+  },
+  {
+   "name": "usage",
+   "displayName": "4. Usage & impact",
+   "layout": [
+    {
+     "widget": {
+      "name": "text_25",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Usage & impact: TEST USAGE ONLY",
+        "**These are developer test requests, not users.** The app has not been piloted; usage and feedback numbers are meaningful only after a pilot starts. LLM calls = answer + claim verifier per request.",
+        "Business KPIs below are **PROPOSED pilot targets** copied from the proposal (docs/08 sec. 6.2-6.3); no measured values exist for them yet."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_26",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_totals",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "requests",
+           "expression": "`requests`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "requests",
+         "displayName": "Requests (test usage)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Requests (test usage)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 3,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_27",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_totals",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "llm_calls",
+           "expression": "`llm_calls`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "llm_calls",
+         "displayName": "LLM calls (test usage)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "LLM calls (test usage)"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 3,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_28",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_totals",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "thumbs_up",
+           "expression": "`thumbs_up`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "thumbs_up",
+         "displayName": "👍 (test usage)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "👍 (test usage)"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 3,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "counter_29",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_totals",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "thumbs_down",
+           "expression": "`thumbs_down`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "thumbs_down",
+         "displayName": "👎 (test usage)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "👎 (test usage)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 3,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "bar_30",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_daily",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "day",
+           "expression": "`day`"
+          },
+          {
+           "name": "requests",
+           "expression": "`requests`"
+          },
+          {
+           "name": "page",
+           "expression": "`page`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "day",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "day"
+        },
+        "y": {
+         "fieldName": "requests",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "requests"
+        },
+        "color": {
+         "fieldName": "page",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "page"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Requests per day (test usage only)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "table_31",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "usage_daily",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "day",
+           "expression": "`day`"
+          },
+          {
+           "name": "page",
+           "expression": "`page`"
+          },
+          {
+           "name": "requests",
+           "expression": "`requests`"
+          },
+          {
+           "name": "users",
+           "expression": "`users`"
+          },
+          {
+           "name": "latency_p50_s",
+           "expression": "`latency_p50_s`"
+          },
+          {
+           "name": "latency_p90_s",
+           "expression": "`latency_p90_s`"
+          },
+          {
+           "name": "llm_calls",
+           "expression": "`llm_calls`"
+          },
+          {
+           "name": "refused_by_gate",
+           "expression": "`refused_by_gate`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "day",
+          "displayName": "day",
+          "title": "day",
+          "type": "datetime",
+          "displayAs": "datetime",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "dateTimeFormat": "YYYY-MM-DD HH:mm"
+         },
+         {
+          "fieldName": "page",
+          "displayName": "page",
+          "title": "page",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 1,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "requests",
+          "displayName": "requests",
+          "title": "requests",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "users",
+          "displayName": "users",
+          "title": "users",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "latency_p50_s",
+          "displayName": "latency_p50_s",
+          "title": "latency_p50_s",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "latency_p90_s",
+          "displayName": "latency_p90_s",
+          "title": "latency_p90_s",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": "0.000"
+         },
+         {
+          "fieldName": "llm_calls",
+          "displayName": "llm_calls",
+          "title": "llm_calls",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 6,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "refused_by_gate",
+          "displayName": "refused_by_gate",
+          "title": "refused_by_gate",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 7,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Requests, latency and LLM calls per day (test usage only)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 6,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "table_32",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "feedback_daily",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "day",
+           "expression": "`day`"
+          },
+          {
+           "name": "page",
+           "expression": "`page`"
+          },
+          {
+           "name": "thumbs_up",
+           "expression": "`thumbs_up`"
+          },
+          {
+           "name": "thumbs_down",
+           "expression": "`thumbs_down`"
+          },
+          {
+           "name": "wrong_source_comments",
+           "expression": "`wrong_source_comments`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "day",
+          "displayName": "day",
+          "title": "day",
+          "type": "datetime",
+          "displayAs": "datetime",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "dateTimeFormat": "YYYY-MM-DD HH:mm"
+         },
+         {
+          "fieldName": "page",
+          "displayName": "page",
+          "title": "page",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 1,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "thumbs_up",
+          "displayName": "thumbs_up",
+          "title": "thumbs_up",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "thumbs_down",
+          "displayName": "thumbs_down",
+          "title": "thumbs_down",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "wrong_source_comments",
+          "displayName": "wrong_source_comments",
+          "title": "wrong_source_comments",
+          "type": "integer",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Feedback per day (test usage only)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 6,
+      "height": 4
+     }
+    },
+    {
+     "widget": {
+      "name": "table_33",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "targets",
+         "disaggregated": true,
+         "fields": [
+          {
+           "name": "kpi",
+           "expression": "`kpi`"
+          },
+          {
+           "name": "kind",
+           "expression": "`kind`"
+          },
+          {
+           "name": "target",
+           "expression": "`target`"
+          },
+          {
+           "name": "phase",
+           "expression": "`phase`"
+          },
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "kpi",
+          "displayName": "kpi",
+          "title": "kpi",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "kind",
+          "displayName": "kind",
+          "title": "kind",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 1,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "target",
+          "displayName": "target",
+          "title": "target",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 2,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "phase",
+          "displayName": "phase",
+          "title": "phase",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 3,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "source",
+          "displayName": "source",
+          "title": "source",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 4,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "status",
+          "displayName": "status",
+          "title": "status",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 5,
+          "alignContent": "left",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Business KPIs: PROPOSED pilot targets (not measured)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 15,
+      "width": 6,
+      "height": 6
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS"
+  }
+ ]
+}

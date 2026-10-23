@@ -3,7 +3,8 @@
 `refresh_job.json` is the weekly continuous-learning job (docs/03_model_rag_design.md §7): ingest → silver →
 documents → suppliers → **data-quality gate** (notebook 12; graph and both models wait for it, so a failed check stops
 them) → graph → extraction → embeddings + index sync → model retrain (champion/challenger) →
-re-bid rates → early warnings → RAG regression evaluation (fails the run if recall@5 drops by more than 5 points).
+re-bid rates → early warnings → RAG regression evaluation (fails the run if recall@5 drops by more than 5 points) →
+**KPI dashboard** (notebook 85; `run_if: ALL_DONE`, so it refreshes even when the evaluation fails and the failure shows).
 
 - Replace `<GIT_FOLDER>` with the workspace path of this repo's Git folder.
 - It is created **paused**. Create it (Jobs UI → JSON import, or `databricks jobs create --json @jobs/refresh_job.json`)

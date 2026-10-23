@@ -23,6 +23,7 @@ Sync the repo to a Databricks Git folder first. Every notebook imports tested co
 | **11** | `61_rag_evaluation.py` | Eval set (stops after building it: widget `stage` = questions; review, then `stage` = full), 50/50 split, hybrid RAG + verifier, calibrated gate, injection test | LLM + embeddings | new |
 | **12** | `70_early_warnings.py` | Early-warning flags, amendment indicator, backtest | no | new |
 | **13** | `80_app_setup.py` | Apps limit check (read-only), ops tables, grants for the app's service principal, deployment steps | no | new |
+| **14** | `85_kpi_dashboard.py` | KPI views (`dashboards/kpi_views.sql`) + AI/BI dashboard from `dashboards/procurement_kpis.lvdash.json`: create or update, publish, link saved in `ops.config` | no (Lakeview API) | new |
 
 If notebook 12 fails, stop: its output names the failed check and up to 5 examples; the models (50, 51) must not run on
 a refresh that failed the gate. The weekly job enforces this order (50, 51 and 40 depend on the gate).

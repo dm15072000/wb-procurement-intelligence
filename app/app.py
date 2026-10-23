@@ -81,6 +81,16 @@ def min_score():
 
 
 @st.cache_data(ttl=3600)
+def kpi_dashboard_url():
+    """Link to the AI/BI KPI dashboard, saved in ops.config by notebook 85 (None until it has run)."""
+    try:
+        rows = run_sql(f"SELECT value FROM {CATALOG}.ops.config WHERE key = 'kpi_dashboard_url'")
+        return rows[0]["value"] if rows else None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
 def options():
     countries = run_sql(f"""SELECT DISTINCT c.borrower_country_iso3 AS iso3, n.name FROM {CATALOG}.silver.contracts c
                             JOIN {CATALOG}.silver.countries n ON c.borrower_country_iso3 = n.iso3
@@ -309,4 +319,6 @@ PAGES = {"Plan a package": plan_screen, "Monitor a project": monitor_screen, "As
          "Data coverage": coverage_screen}
 choice = st.sidebar.radio("Screen", list(PAGES))
 st.sidebar.caption("World Bank open data · Databricks · every claim cited")
+if kpi_dashboard_url():
+    st.sidebar.link_button("KPI dashboard", kpi_dashboard_url())
 PAGES[choice]()

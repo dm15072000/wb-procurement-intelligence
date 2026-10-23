@@ -185,6 +185,24 @@
       "notebook_task": {
         "notebook_path": "<GIT_FOLDER>/notebooks/61_rag_evaluation"
       }
+    },
+    {
+      "task_key": "kpi_dashboard",
+      "depends_on": [
+        {
+          "task_key": "rag_regression_eval"
+        },
+        {
+          "task_key": "early_warnings"
+        },
+        {
+          "task_key": "data_quality"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/85_kpi_dashboard"
+      },
+      "run_if": "ALL_DONE"
     }
   ]
 }
