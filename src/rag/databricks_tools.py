@@ -22,6 +22,8 @@ DURATION_MODEL = f"models:/{CATALOG}.ml.tender_duration@champion"
 _PID = re.compile(r"^P\d{6}$")
 _CKEY = re.compile(r"^C:[A-Za-z0-9\-_/.]+$")
 _ISO3 = re.compile(r"^[A-Z]{3}$")
+# outside the f-string below: Python 3.11 (the Databricks App runtime) rejects a backslash inside an f-string expression
+_CNODE = re.compile(r"^contract:C:[A-Za-z0-9\-_/.]+$")
 
 
 def _in_list(values, pattern):
@@ -165,8 +167,7 @@ class DatabricksBackend:
                    k.doc_type, k.doc_date, k.section_path, k.text, k.title, k.pdf_url, k.page_start, k.chunk_type
             FROM {CATALOG}.gold.edges e JOIN {CATALOG}.docs.chunk_embeddings k ON e.src_id = concat('chunk:', k.chunk_id)
             WHERE e.edge_type = 'DESCRIBES'
-              AND e.dst_id IN ({_in_list(['contract:' + c for c in contract_keys if _CKEY.match(c)],
-                                         re.compile(r'^contract:C:[A-Za-z0-9\-_/.]+$'))})""", {})
+              AND e.dst_id IN ({_in_list(['contract:' + c for c in contract_keys if _CKEY.match(c)], _CNODE)})""", {})
         return rows
 
     # --- structured facts -----------------------------------------------------------------------------------------
