@@ -318,7 +318,7 @@ to 6 decimals) and our vectors are not unit length (norm 24.0 ± 0.08 for all 9,
 answer metrics of this run therefore cover only 3 answers). Fix: the score is converted back to cosine with the
 measured norm (error < 0.01; `l2_score_to_cosine`), and the threshold grid is now the calibration questions' own
 scores, so it can never miss the scale again. Calibration scores on the old scale: answerable p10 0.0027 / median
-0.0036, refusals 0.0025–0.0029, i.e. cosine ≈ 0.65 / 0.75 vs 0.65–0.69: the gate separates them only weakly.
+0.0036, refusals 0.0025–0.0029, i.e. cosine ≈ 0.68 / 0.76 vs 0.65–0.70: the gate separates them only weakly.
 
 **After translation + gate fix:** _[pending: notebook 60 sync and notebook 61 re-run, blocked by the daily compute
 limit on 2026-10-23]_ strict / lenient recall, French-source recall, gate threshold and blocked counts.
