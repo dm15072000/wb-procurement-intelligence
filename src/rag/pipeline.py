@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from src.guardrails import citation_check as gc
 from src.guardrails import claim_verifier as cv
 from src.rag import keyword as kw
+from src.rag import multilingual as ml
 from src.rag import prompt as pr
 from src.rag import retrieval as rt
 
@@ -34,6 +35,11 @@ class Tools:
     # Keyword side of hybrid retrieval (checkpoint d change 2): (query, filters, k) -> hits with kw_score / id_match.
     # Leave None when `search` already runs Vector Search in HYBRID mode.
     keyword_search: Optional[Callable[[str, dict, int], list]] = None
+    # French retrieval (2026-10-23): keyword search ranked over all passages, using the English translation of the
+    # translated (French) passages, hits flagged "translated"; and a question -> French question translator (1 LLM
+    # call), used only when the question concerns a French-speaking country. Both optional.
+    translated_keyword_search: Optional[Callable[[str, dict, int], list]] = None
+    translate_query: Optional[Callable[[str], Optional[str]]] = None
     verify_claims: bool = True                           # batched claim-support verifier (change 1)
     verifier_llm: Optional[Callable[[list], str]] = None  # defaults to llm
     min_score: float = 0.55                              # retrieval gate; calibrated in notebook 61
@@ -54,6 +60,7 @@ class Result:
     retrieved: list = field(default_factory=list)        # ranked chunk_ids (for retrieval metrics)
     top_score: float = 0.0                               # best PURE vector similarity (calibrates the retrieval gate)
     route: Optional[list] = None                         # document types the question was routed to, if any
+    french_query: Optional[str] = None                   # French version of the question, when one was searched
     identifier_hit: bool = False                         # a queried project ID / reference was found verbatim
     timings: dict = field(default_factory=dict)
 
@@ -67,35 +74,56 @@ def package_text(pkg):
     return ". ".join(p for p in parts if p)
 
 
-def _scope_search(tools, vec, query, filters):
-    """One scope = vector (or Vector Search hybrid) hits, fused with keyword hits when a keyword tool is given."""
+def _scope_search(tools, vec, query, filters, english=True):
+    """One scope = vector (or Vector Search hybrid) hits, fused with keyword hits when a keyword tool is given. For an
+    English query, translated (French) passages found by English keyword matching are added at their keyword rank."""
     vh = tools.search(vec, filters, tools.k_search, query)
     kh = tools.keyword_search(query, filters, tools.k_search) if tools.keyword_search else []
-    return rt.hybrid_merge(vh, kh)
+    hits = rt.hybrid_merge(vh, kh)
+    if english and tools.translated_keyword_search:
+        hits = ml.rank_aligned(hits, tools.translated_keyword_search(query, filters, tools.k_search))
+    return hits
 
 
-def retrieve(query, pkg, tools, project_ids=(), contract_keys=(), task="ask", doc_types=None):
+def _scopes(as_of, project_ids, task, doc_types):
+    """(name, filters, fallback filters if the routed search is empty) for every search scope."""
+    out = []
+    if project_ids:
+        out.append(("project_scope", rt.filters_for(as_of, project_ids=project_ids, doc_types=doc_types),
+                    rt.filters_for(as_of, project_ids=project_ids) if doc_types else None))
+    out.append(("lessons_scope", rt.filters_for(as_of, doc_types=rt.LESSON_DOC_TYPES), None))
+    if task == "plan":   # tender design (L2): past REOI / IFB text with scope and qualification criteria
+        out.append(("notice_scope", rt.filters_for(as_of, doc_types=[rt.NOTICE_DOC_TYPE]), None))
+    if not project_ids:
+        out.append(("open_scope", rt.filters_for(as_of, doc_types=doc_types),
+                    rt.filters_for(as_of) if doc_types else None))
+    return out
+
+
+def retrieve(query, pkg, tools, project_ids=(), contract_keys=(), task="ask", doc_types=None, info=None):
     """Steps 3-6: project-scoped, lessons-scoped and (for planning) notice-scoped hybrid search, DESCRIBES links,
     merge, identifier marking, rerank. doc_types (question routing) restricts the project and open scopes; if the
-    restricted search finds nothing, it is repeated without the restriction."""
+    restricted search finds nothing, it is repeated without the restriction. For a French-speaking country the same
+    scopes are searched again with the question in French (info["french_query"] records it)."""
     vec = tools.embed(query)
-    as_of = pkg.get("as_of")
+    scopes = _scopes(pkg.get("as_of"), project_ids, task, doc_types)
     lists = []
-    if project_ids:
-        hits = _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids, doc_types=doc_types))
-        if doc_types and not hits:
-            hits = _scope_search(tools, vec, query, rt.filters_for(as_of, project_ids=project_ids))
-        lists.append(("project_scope", hits))
-    lists.append(("lessons_scope",
-                  _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=rt.LESSON_DOC_TYPES))))
-    if task == "plan":   # tender design (L2): past REOI / IFB text with scope and qualification criteria
-        lists.append(("notice_scope",
-                      _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=[rt.NOTICE_DOC_TYPE]))))
-    if not project_ids:
-        hits = _scope_search(tools, vec, query, rt.filters_for(as_of, doc_types=doc_types))
-        if doc_types and not hits:
-            hits = _scope_search(tools, vec, query, rt.filters_for(as_of))
-        lists.append(("open_scope", hits))
+    for name, filters, fallback in scopes:
+        hits = _scope_search(tools, vec, query, filters)
+        if fallback and not hits:
+            hits = _scope_search(tools, vec, query, fallback)
+        lists.append((name, hits))
+    if tools.translate_query and ml.french_context(query, pkg):
+        fq = tools.translate_query(query)
+        if fq:
+            if info is not None:
+                info["french_query"] = fq
+            fvec = tools.embed(fq)
+            for name, filters, fallback in scopes:
+                hits = _scope_search(tools, fvec, fq, filters, english=False)
+                if fallback and not hits:
+                    hits = _scope_search(tools, fvec, fq, fallback, english=False)
+                lists.append((name + "_fr", hits))
     if contract_keys:
         lists.append(("describes_link", tools.describes_hits(list(contract_keys))))
     merged = rt.merge(*lists)
@@ -120,7 +148,8 @@ def run(pkg, tools, task="plan", question=None):
     query = question if task == "ask" else package_text(pkg)
     route = rt.route_doc_types(question) if task == "ask" else None
     t1 = time.time()
-    hits = retrieve(query, pkg, tools, projects, contract_keys, task, doc_types=route)
+    info = {}
+    hits = retrieve(query, pkg, tools, projects, contract_keys, task, doc_types=route, info=info)
     timings["retrieval_s"] = round(time.time() - t1, 2)
     # Gate: the best PURE vector similarity must clear the threshold, unless a queried identifier (project ID,
     # contract reference) was found verbatim: an exact code match is evidence even when embeddings rate it low.
@@ -128,7 +157,7 @@ def run(pkg, tools, task="plan", question=None):
     sims = [s for h in hits if "describes_link" not in (h.get("found_by") or [])
             for s in (h.get("vector_score"), h.get("vector_top")) if s is not None]
     result = Result(status="answered", retrieved=[h["chunk_id"] for h in hits], timings=timings,
-                    top_score=max(sims, default=0.0), route=route,
+                    top_score=max(sims, default=0.0), route=route, french_query=info.get("french_query"),
                     identifier_hit=any(h.get("id_match") for h in hits))
     if not (result.top_score >= tools.min_score or result.identifier_hit):
         result.status = "refused_no_evidence"

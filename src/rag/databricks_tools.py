@@ -71,6 +71,7 @@ class DatabricksBackend:
         # ANN + our own keyword index. None = not tried yet.
         self.hybrid_supported = None
         self._keyword_index = None
+        self._en_keyword_index = None      # English-aware keyword index (translated passages), built on first use
 
     # --- Foundation Model endpoints -------------------------------------------------------------------------------
     def embed(self, text):
@@ -126,6 +127,34 @@ class DatabricksBackend:
                 f"SELECT {', '.join(rt.COLUMNS)}, doc_date_int, is_primary FROM {CATALOG}.docs.chunk_embeddings", {})
             self._keyword_index = KeywordIndex(rows)
         return self._keyword_index.search(query, filters, k)
+
+    def translated_keyword_search(self, query, filters, k):
+        """English keyword matching that also reaches the translated (French) passages (2026-10-23): BM25 over ALL
+        indexed passages, using the English translation of the 196 translated ones (docs.chunk_translations, same
+        text_hash) and the original text of the rest. Hits are ranked against the whole corpus; translated ones are
+        flagged and carry their ORIGINAL text, which is what is shown, cited and quote-checked."""
+        if self._en_keyword_index is None:
+            from src.rag.keyword import KeywordIndex
+            cols = ", ".join(f"e.{c}" for c in rt.COLUMNS)
+            rows = self.sql(f"""
+                SELECT {cols}, e.doc_date_int, e.is_primary, t.translated_text
+                FROM {CATALOG}.docs.chunk_embeddings e
+                LEFT JOIN {CATALOG}.docs.chunk_translations t ON t.chunk_id = e.chunk_id AND t.text_hash = e.text_hash""",
+                            {})
+            for r in rows:
+                r["original_text"], r["translated"] = r["text"], bool(r.get("translated_text"))
+                r["text"] = r.pop("translated_text") or r["text"]
+            self._en_keyword_index = KeywordIndex(rows)
+        hits = self._en_keyword_index.search(query, filters, k)
+        return [dict(h, text=h["original_text"]) for h in hits]
+
+    def translate_to_french(self, question):
+        """The question in French (1 LLM call), or None if the reply is unusable."""
+        from src.rag import multilingual as ml
+        try:
+            return ml.clean_translation(self.chat(ml.translate_messages(question), max_tokens=300), question)
+        except Exception:
+            return None
 
     def describes_hits(self, contract_keys):
         """Passages that a strong DESCRIBES link says mention one of these contracts. Score = link weight."""

@@ -108,6 +108,7 @@ def tools(log_page):
     return pl.Tools(embed=b.embed, search=b.search, llm=b.chat, similar_contracts=b.similar_contracts,
                     predictions=b.predictions, related_projects=b.related_projects, describes_hits=b.describes_hits,
                     keyword_search=b.keyword_search,   # [] when Vector Search HYBRID mode covers keywords
+                    translated_keyword_search=b.translated_keyword_search, translate_query=b.translate_to_french,
                     verify_claims=True, min_score=min_score(), log=lambda rec: log_request(log_page, rec))
 
 

@@ -110,7 +110,9 @@ def make_tools(min_score=0.0, search=None):
     return pl.Tools(embed=backend.embed, search=search or backend.search, llm=backend.chat,
                     similar_contracts=backend.similar_contracts, predictions=backend.predictions,
                     related_projects=backend.related_projects, describes_hits=backend.describes_hits,
-                    keyword_search=backend.keyword_search, verify_claims=True, min_score=min_score)
+                    keyword_search=backend.keyword_search, verify_claims=True, min_score=min_score,
+                    translated_keyword_search=backend.translated_keyword_search,   # French passages (2026-10-23)
+                    translate_query=backend.translate_to_french)
 
 # COMMAND ----------
 
@@ -233,7 +235,7 @@ tools = make_tools(min_score=0.0)
 results = []
 for q in questions:
     r = pl.run({"as_of": str(date.today())}, tools, task="ask", question=q["question"])
-    results.append({**q, "status": r.status, "retrieved": r.retrieved, "top_score": r.top_score, "route": r.route,
+    results.append({**q, "status": r.status, "retrieved": r.retrieved, "top_score": r.top_score, "route": r.route, "french_query": r.french_query,
                     "identifier_hit": r.identifier_hit, "guardrail_report": r.guardrail_report,
                     "claims": [{"text": c["text"], "citations": c["citations"]} for c in r.claims],
                     "cited_text": {eid: r.evidence[eid]["text"] for c in r.claims for eid in c["citations"] if eid in r.evidence},
@@ -364,7 +366,7 @@ by_kind_lenient = {k: ev.summarise([x for x in lenient_test if x["kind"] == k])[
                    for k in kinds if any(x["kind"] == k for x in test_rows)}
 # French-source questions (gold passage detected as French), wherever they sit; strict and lenient
 fr_rows = [x for x in test_rows if x.get("gold_lang") == "fr"]
-french = {"qids": [x["qid"] for x in fr_rows],
+french = {"qids": [x["qid"] for x in fr_rows], "french_query_used": {x["qid"]: x.get("french_query") for x in fr_rows},
           "strict": ev.summarise(fr_rows)["all"] if fr_rows else None,
           "lenient": ev.summarise(ln.lenient_rows(fr_rows, lenient_judged))["all"] if fr_rows else None,
           "retrieved_gold_rank": {x["qid"]: (x["retrieved"].index(g) + 1 if (g := next((c for c in x["retrieved"]
@@ -383,7 +385,8 @@ gate_behaviour = {"score": "pure vector similarity (max over retrieved passages 
                   "test_refusals": sum(1 for x in test_rows if x["should_refuse"]),
                   "test_answerable_blocked_by_gate": sum(1 for x in test_rows if not x["should_refuse"]
                                                          and x["status"] == "refused_no_evidence"),
-                  "routed_to_completion_reports": sum(1 for x in results if x.get("route"))}
+                  "routed_to_completion_reports": sum(1 for x in results if x.get("route")),
+                  "french_query_searched": sum(1 for x in results if x.get("french_query"))}
 summary_reviewed = ev.summarise([x for x in test_rows if x["reviewed"]])["all"]
 by_kind = {k: ev.summarise([x for x in test_rows if x["kind"] == k])["all"] for k in kinds if any(x["kind"] == k for x in test_rows)}
 run_ts = datetime.now(timezone.utc)
