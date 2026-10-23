@@ -64,13 +64,18 @@ if APP_SP:
     for stmt in [f"GRANT USE CATALOG ON CATALOG {CATALOG} TO {sp}",
                  *[f"GRANT USE SCHEMA, SELECT ON SCHEMA {CATALOG}.{s} TO {sp}" for s in ("silver", "gold", "docs", "ml", "ops")],
                  f"GRANT MODIFY ON TABLE {O}.feedback TO {sp}",
-                 f"GRANT MODIFY ON TABLE {O}.rag_requests TO {sp}",
-                 f"GRANT EXECUTE ON MODEL {CATALOG}.ml.tender_duration TO {sp}"]:
+                 f"GRANT MODIFY ON TABLE {O}.rag_requests TO {sp}"]:
         try:
             spark.sql(stmt)
             print("ok:", stmt)
         except Exception as e:
             print("FAILED:", stmt, "|", str(e)[:200])
+    # A registered model is a FUNCTION securable for grants; SQL "GRANT ... ON MODEL" is rejected (2026-10-22), so the
+    # API is used. The Vector Search endpoint has its own ACL: the app needs CAN_USE on it.
+    from databricks.sdk.service.catalog import PermissionsChange
+    WorkspaceClient().grants.update("function", f"{CATALOG}.ml.tender_duration",
+                                    changes=[PermissionsChange(principal=APP_SP, add=["EXECUTE"])])
+    print("ok: EXECUTE on the registered model")
 else:
     print("Set APP_SP first.")
 
