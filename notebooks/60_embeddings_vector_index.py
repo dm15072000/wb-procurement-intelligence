@@ -76,9 +76,16 @@ print(report)
 # MAGIC   vector knows which document and section the passage came from.
 # MAGIC - **Procurement notices** (checkpoint d change 3): REOI / IFB text from `docs.notice_chunks` (notebook 21) is
 # MAGIC   indexed alongside, as doc_type "Procurement Notice", cited by notice ID (no URL).
+# MAGIC - **French passages** (2026-10-22): the embedding model is English-only, so a passage with an English translation
+# MAGIC   in `docs.chunk_translations` (notebook 22) is embedded FROM THE TRANSLATION. Only the vector changes: `text`
+# MAGIC   (shown, cited and quoted) is always the original. `embedded_from` records which text was embedded.
 
 # COMMAND ----------
 
+spark.sql(f"""CREATE TABLE IF NOT EXISTS {D}.chunk_translations (chunk_id STRING, text_hash STRING, source_lang STRING,
+              translated_text STRING, numbers_kept DOUBLE, model STRING, translated_at TIMESTAMP)""")
+TRANSLATIONS = f"""
+  LEFT JOIN {D}.chunk_translations t ON t.chunk_id = k.chunk_id AND t.text_hash = k.text_hash"""
 notice_sql = ""
 if spark.catalog.tableExists(f"{D}.notice_chunks"):
     notice_sql = f"""
@@ -87,9 +94,10 @@ if spark.catalog.tableExists(f"{D}.notice_chunks"):
          k.doc_type, k.doc_date, CAST(date_format(k.doc_date, 'yyyyMMdd') AS INT) AS doc_date_int,
          k.section_path, k.chunk_type, k.text, k.text_hash, k.is_primary, k.page_start, k.page_end,
          concat('Procurement notice ', k.notice_id, ': ', k.title) AS title, CAST(NULL AS STRING) AS pdf_url,
-         concat(k.context_header, '\\n', k.text) AS embed_text
+         concat(k.context_header, '\\n', coalesce(t.translated_text, k.text)) AS embed_text,
+         CASE WHEN t.translated_text IS NOT NULL THEN 'english_translation' ELSE 'original' END AS embedded_from
   FROM {D}.notice_chunks k
-  LEFT JOIN {CATALOG}.silver.projects p ON k.project_id = p.project_id"""
+  LEFT JOIN {CATALOG}.silver.projects p ON k.project_id = p.project_id{TRANSLATIONS}"""
 else:
     print("docs.notice_chunks not found: run notebook 21 to index procurement notices")
 source = spark.sql(f"""
@@ -97,12 +105,15 @@ source = spark.sql(f"""
          coalesce(element_at(p.country_iso3_list, 1), cn.iso3) AS country_iso3,
          k.doc_type, k.doc_date, CAST(date_format(k.doc_date, 'yyyyMMdd') AS INT) AS doc_date_int,
          k.section_path, k.chunk_type, k.text, k.text_hash, k.is_primary, k.page_start, k.page_end,
-         d.title, d.pdf_url, concat(k.context_header, '\\n', k.text) AS embed_text
+         d.title, d.pdf_url, concat(k.context_header, '\\n', coalesce(t.translated_text, k.text)) AS embed_text,
+         CASE WHEN t.translated_text IS NOT NULL THEN 'english_translation' ELSE 'original' END AS embedded_from
   FROM {D}.chunks k
   JOIN {D}.documents d ON k.doc_id = d.doc_id
   LEFT JOIN {CATALOG}.silver.projects p ON k.project_id = p.project_id
-  LEFT JOIN {CATALOG}.silver.countries cn ON d.country = cn.name{notice_sql}""")
+  LEFT JOIN {CATALOG}.silver.countries cn ON d.country = cn.name{TRANSLATIONS}{notice_sql}""") \
+    .withColumn("embed_hash", F.sha2(F.col("embed_text"), 256))
 source.createOrReplaceTempView("embed_source")
+report["embedded_from_translation"] = source.where("embedded_from = 'english_translation'").count()
 report["chunks"] = source.count()
 report["chunks_by_doc_type"] = {r.doc_type: r.n for r in source.groupBy("doc_type").count()
                                 .withColumnRenamed("count", "n").collect()}
@@ -117,10 +128,17 @@ report["chunks_by_doc_type"] = {r.doc_type: r.n for r in source.groupBy("doc_typ
 spark.sql(f"""CREATE TABLE IF NOT EXISTS {EMB} (
   chunk_id STRING NOT NULL, doc_id STRING, project_id STRING, country_iso3 STRING, doc_type STRING, doc_date DATE,
   doc_date_int INT, section_path STRING, chunk_type STRING, text STRING, text_hash STRING, is_primary BOOLEAN,
-  page_start INT, page_end INT, title STRING, pdf_url STRING, embedding ARRAY<FLOAT>, embedded_at TIMESTAMP)
+  page_start INT, page_end INT, title STRING, pdf_url STRING, embedding ARRAY<FLOAT>, embedded_at TIMESTAMP,
+  embedded_from STRING, embed_hash STRING)
   TBLPROPERTIES (delta.enableChangeDataFeed = true)""")
-todo = spark.sql(f"""SELECT s.* FROM embed_source s LEFT ANTI JOIN {EMB} e
-                     ON s.chunk_id = e.chunk_id AND s.text_hash = e.text_hash""")
+if "embed_hash" not in spark.table(EMB).columns:          # tables created before 2026-10-22
+    spark.sql(f"ALTER TABLE {EMB} ADD COLUMNS (embedded_from STRING, embed_hash STRING)")
+# Re-embed: new or changed passages, and passages whose embedded text changed between original and translation
+# (rows embedded before 2026-10-22 have no embed_hash and count as embedded from the original).
+todo = spark.sql(f"""SELECT s.* FROM embed_source s LEFT JOIN {EMB} e ON s.chunk_id = e.chunk_id
+                     WHERE e.chunk_id IS NULL OR e.text_hash <> s.text_hash
+                        OR coalesce(e.embedded_from, 'original') <> s.embedded_from
+                        OR (s.embedded_from = 'english_translation' AND coalesce(e.embed_hash, '') <> s.embed_hash)""")
 n_new = todo.count()
 report["chunks_to_embed"] = n_new
 print(n_new, "chunks to embed")

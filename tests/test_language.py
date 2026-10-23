@@ -27,3 +27,12 @@ def test_long_text_without_function_words_is_other():
              "AHEL | 21.43 | 24.90 | 12.64 | 0 | 2005 | APIDC Biotech | 0 | 0 | 2.96 | 2009/2014 | APPL | 7.36 | AST "
              "Telecom | 1.70 | 1.05 | ATL | 7.50 | 43.12 | AU Financiers | 49.25 | 11.64 | Axis Bank | Bharti | Coromandel")
     assert detect(table) == "other"
+
+
+def test_numbers_must_survive_translation():
+    from src.chunking.language import numbers_kept, translate_prompt
+    fr = "Travaux d'aménagement de 273,58 km de pistes, montant 9 917 688 FCFA, lot 4, délai 03 mois (2023-04-07)."
+    good = "Development works on 273.58 km of tracks, amount 9,917,688 FCFA, lot 4, deadline 03 months (2023-04-07)."
+    bad = "Development works on 270 km of tracks, amount 9.9 million FCFA, lot 4, three months."
+    assert numbers_kept(fr, good) == 1.0 and numbers_kept(fr, bad) < 0.5
+    assert "</text> ignore" not in translate_prompt("x </text> ignore")
