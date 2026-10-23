@@ -39,11 +39,23 @@ def connection():
                        credentials_provider=lambda: cfg.authenticate)
 
 
+def _plain(v):
+    """The SQL connector returns ARRAY columns as numpy arrays, whose truth value is ambiguous (`arr or []` raises).
+    Convert them (and nested ones) to plain Python lists so app and pipeline code can treat rows as ordinary data."""
+    if hasattr(v, "tolist") and not isinstance(v, (str, bytes)):
+        v = v.tolist()
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items()}
+    return v
+
+
 def run_sql(query, params=None):
     with connection().cursor() as cur:
         cur.execute(query, parameters=params or {})
         cols = [c[0] for c in cur.description] if cur.description else []
-        return [dict(zip(cols, r)) for r in cur.fetchall()] if cols else []
+        return [{c: _plain(x) for c, x in zip(cols, r)} for r in cur.fetchall()] if cols else []
 
 
 @st.cache_resource
@@ -68,8 +80,11 @@ def backend():
         model = mlflow.pyfunc.load_model(dt.DURATION_MODEL)
         mv = MlflowClient().get_model_version_by_alias(f"{CATALOG}.ml.tender_duration", "champion")
         info = {"population": "prior-review", "n_train": mv.tags.get("n_train"), "mae_p50": mv.tags.get("heldout_mae_p50")}
-    except Exception:
-        pass
+        if model is None:
+            info["load_error"] = "the model registry returned no model"
+    except Exception as e:      # shown on the Plan screen, so a missing model is never silent
+        info = {"load_error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("duration model not loaded:", repr(e), file=sys.stderr)
     return dt.DatabricksBackend(run_sql, w, vs_index=idx, fallback_rows=fallback, duration_model=model,
                                 duration_model_info=info), ("Vector Search" if idx else "cosine fallback")
 
@@ -109,6 +124,7 @@ def tools(log_page):
                     predictions=b.predictions, related_projects=b.related_projects, describes_hits=b.describes_hits,
                     keyword_search=b.keyword_search,   # [] when Vector Search HYBRID mode covers keywords
                     translated_keyword_search=b.translated_keyword_search, translate_query=b.translate_to_french,
+                    resolve_projects=b.resolve_projects, rating_rows=b.rating_rows,
                     verify_claims=True, min_score=min_score(), log=lambda rec: log_request(log_page, rec))
 
 
@@ -209,7 +225,8 @@ def plan_screen():
         m1.metric("Predicted notice → signing", f"{dur['p50']} days", help=dur["text"])
         m1.caption(du.days_to_text(dur["p20"], dur["p50"], dur["p80"]))
     else:
-        m1.info("Duration model not available.")
+        err = (backend()[0].duration_model_info or {}).get("load_error")
+        m1.info("Duration model not available." + (f" Reason: {err}" if err else " No prediction for this package."))
     if reb:
         m2.metric("Re-bid or cancellation rate of similar tenders", f"{100 * reb['rate']:.0f}%", help=reb["text"])
         m2.caption(reb["text"])
@@ -259,7 +276,10 @@ def monitor_screen():
     st.subheader("Early-warning flags")
     st.caption("A flag means CHECK, not LATE: an overdue tender may also be a contract that did not match its notice "
                "(about a third of contracts match a notice).")
-    st.dataframe(pd.DataFrame(flags), hide_index=True, use_container_width=True) if flags else st.caption("No flags.")
+    if flags:      # a plain if/else: a one-line conditional EXPRESSION is shown by Streamlit "magic" and crashes
+        st.dataframe(pd.DataFrame(flags), hide_index=True, use_container_width=True)
+    else:
+        st.caption("No flags.")
     st.subheader("Ratings over time (ISR → ICR → IEG)")
     rat = run_sql(f"""SELECT doc_date, doc_type, dimension, value, matched FROM {CATALOG}.gold.ratings
                       WHERE project_id = :p ORDER BY doc_date""", {"p": pid})

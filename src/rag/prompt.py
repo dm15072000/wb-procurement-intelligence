@@ -47,7 +47,10 @@ def format_evidence(hits, max_chars=3500):
         attrs = (f'id="{eid}" doc_type="{h.get("doc_type")}" date="{h.get("doc_date")}" '
                  f'project="{h.get("project_id")}" section="{_neutralise(h.get("section_path"))[:120]}"')
         blocks.append(f"<evidence {attrs}>\n{body}\n</evidence>")
-        sources[eid], meta[eid] = body, h
+        # The checks see what the model saw: the passage text AND its attributes (document type, date, project),
+        # so a year taken from the document's date ("the 2016 ISR") is supported by the cited source.
+        sources[eid] = f"[{h.get('doc_type')}, dated {h.get('doc_date')}, project {h.get('project_id')}] {body}"
+        meta[eid] = h
     return "\n\n".join(blocks), sources, meta
 
 

@@ -19,6 +19,7 @@ from src.guardrails import citation_check as gc
 from src.guardrails import claim_verifier as cv
 from src.rag import keyword as kw
 from src.rag import multilingual as ml
+from src.rag import query as qy
 from src.rag import prompt as pr
 from src.rag import retrieval as rt
 
@@ -40,6 +41,10 @@ class Tools:
     # call), used only when the question concerns a French-speaking country. Both optional.
     translated_keyword_search: Optional[Callable[[str, dict, int], list]] = None
     translate_query: Optional[Callable[[str], Optional[str]]] = None
+    # Ask questions (2026-10-23): project names -> IDs (question -> [project_id]) and the extracted rating timeline as
+    # structured facts ([project_id] -> rows of gold.ratings). Both optional.
+    resolve_projects: Optional[Callable[[str], list]] = None
+    rating_rows: Optional[Callable[[list], list]] = None
     verify_claims: bool = True                           # batched claim-support verifier (change 1)
     verifier_llm: Optional[Callable[[list], str]] = None  # defaults to llm
     min_score: float = 0.55                              # retrieval gate; calibrated in notebook 61
@@ -61,6 +66,9 @@ class Result:
     top_score: float = 0.0                               # best PURE vector similarity (calibrates the retrieval gate)
     route: Optional[list] = None                         # document types the question was routed to, if any
     french_query: Optional[str] = None                   # French version of the question, when one was searched
+    search_query: Optional[str] = None                   # the question without answer-style instructions
+    style: str = ""                                      # instructions removed from the search ("in detail", ...)
+    resolved_projects: list = field(default_factory=list)  # project IDs found from project NAMES in the question
     identifier_hit: bool = False                         # a queried project ID / reference was found verbatim
     timings: dict = field(default_factory=dict)
 
@@ -139,14 +147,24 @@ def run(pkg, tools, task="plan", question=None):
     t0 = time.time()
     timings = {}
     facts = [] if task == "ask" else tools.similar_contracts(pkg) + tools.predictions(pkg)
-    timings["sql_and_models_s"] = round(time.time() - t0, 2)
     contract_keys = [f["contract_key"] for f in facts if f.get("contract_key")]
-    # Query understanding (deterministic): project IDs written in a question scope the search to those projects.
+    # Query understanding (deterministic). Answer-style instructions ("tell me in detail") are not search terms: they
+    # are removed from the search query and passed to the answer step. Project IDs written in the question, and
+    # project NAMES matched to IDs, scope the search to those projects.
+    search_q, style = qy.split_instructions(question) if task == "ask" else (None, "")
     named = re.findall(r"\bP\d{6}\b", question or "") if task == "ask" else []
+    resolved = [p for p in (tools.resolve_projects(search_q) if task == "ask" and tools.resolve_projects else [])
+                if p not in named]
     related = list(tools.related_projects(pkg, facts)) if task != "ask" else []
-    projects = list(dict.fromkeys(([pkg["project_id"]] if pkg.get("project_id") else []) + named + related))
-    query = question if task == "ask" else package_text(pkg)
-    route = rt.route_doc_types(question) if task == "ask" else None
+    projects = list(dict.fromkeys(([pkg["project_id"]] if pkg.get("project_id") else []) + named + resolved + related))
+    # Rating questions about known projects: the extracted rating timeline, the final-outcome rule and conflict flags
+    # become structured facts, so the answer can show the timeline with sources.
+    if task == "ask" and projects and tools.rating_rows and qy.is_rating_question(search_q):
+        facts = qy.rating_facts(tools.rating_rows(projects))
+    timings["sql_and_models_s"] = round(time.time() - t0, 2)
+    query = search_q if task == "ask" else package_text(pkg)
+    # Final-outcome questions are routed to ICR / IEG; questions about change over time keep the ISRs.
+    route = (None if qy.is_trend_question(search_q) else rt.route_doc_types(search_q)) if task == "ask" else None
     t1 = time.time()
     info = {}
     hits = retrieve(query, pkg, tools, projects, contract_keys, task, doc_types=route, info=info)
@@ -158,8 +176,11 @@ def run(pkg, tools, task="plan", question=None):
             for s in (h.get("vector_score"), h.get("vector_top")) if s is not None]
     result = Result(status="answered", retrieved=[h["chunk_id"] for h in hits], timings=timings,
                     top_score=max(sims, default=0.0), route=route, french_query=info.get("french_query"),
+                    search_query=search_q, style=style, resolved_projects=resolved,
                     identifier_hit=any(h.get("id_match") for h in hits))
-    if not (result.top_score >= tools.min_score or result.identifier_hit):
+    # Rating facts from extracted ratings (each with its source passage) also count as evidence for the gate.
+    has_rating_facts = any(f.get("kind") == "rating" for f in facts)
+    if not (result.top_score >= tools.min_score or result.identifier_hit or has_rating_facts):
         result.status = "refused_no_evidence"
         return _log(tools, pkg, result)
     # Quarantine: a passage containing instruction-like text ("ignore previous instructions") is NOT shown to the
@@ -172,7 +193,9 @@ def run(pkg, tools, task="plan", question=None):
     ev_block, ev_sources, ev_meta = pr.format_evidence(hits)
     f_block, f_sources, f_meta = pr.format_facts(facts)
     result.evidence, result.facts = ev_meta, f_meta
-    messages = pr.build_messages(task, question or package_text(pkg), ev_block, f_block)
+    request = (search_q + (f"\n(Answer style requested by the user: {style}.)" if style else "")) if task == "ask" \
+        else package_text(pkg)
+    messages = pr.build_messages(task, request, ev_block, f_block)
     t2 = time.time()
     answer = pr.parse_answer(tools.llm(messages))
     timings["llm_s"] = round(time.time() - t2, 2)
@@ -201,5 +224,7 @@ def _log(tools, pkg, result):
     if tools.log:
         tools.log({"package": pkg, "status": result.status, "retrieved": result.retrieved,
                    "guardrail_report": result.guardrail_report, "injection_flags": result.injection_flags,
-                   "identifier_hit": result.identifier_hit, "timings": result.timings})
+                   "identifier_hit": result.identifier_hit, "timings": result.timings,
+                   "search_query": result.search_query, "style": result.style,
+                   "resolved_projects": result.resolved_projects, "route": result.route})
     return result

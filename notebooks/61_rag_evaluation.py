@@ -112,7 +112,8 @@ def make_tools(min_score=0.0, search=None):
                     related_projects=backend.related_projects, describes_hits=backend.describes_hits,
                     keyword_search=backend.keyword_search, verify_claims=True, min_score=min_score,
                     translated_keyword_search=backend.translated_keyword_search,   # French passages (2026-10-23)
-                    translate_query=backend.translate_to_french)
+                    translate_query=backend.translate_to_french,
+                    resolve_projects=backend.resolve_projects, rating_rows=backend.rating_rows)   # 2026-10-23
 
 # COMMAND ----------
 
@@ -355,6 +356,36 @@ mechanical_removed = sum(r.get("removed", 0) for r in reports) - verifier_totals
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 6b. Phrasing robustness (2026-10-23, from app testing)
+# MAGIC Five questions, each asked plainly and with "Tell me in detail: " in front. Answer-style instructions are removed
+# MAGIC from the search query (`src/rag/query.py`), so the retrieved passages should be identical; an LLM judge checks
+# MAGIC whether the two answers agree (one may be more detailed). The first question is the one that failed in the app.
+
+# COMMAND ----------
+
+import src.evaluation.robustness as rb
+importlib.reload(rb)
+APP_QUESTION = ("How was implementation progress rated over time for the Yunnan highway project, and did the final "
+                "rating differ from earlier progress reports?")
+robust_qs = [APP_QUESTION] + [x["question"] for x in sorted(test_rows, key=lambda x: x["qid"])
+                              if not x["should_refuse"] and x["kind"] in ("lesson", "rating", "contract")][:4]
+gated = make_tools(threshold)
+robust_rows = []
+for q in robust_qs:
+    runs = [pl.run({"as_of": str(date.today())}, gated, task="ask", question=v) for v in rb.variants(q)]
+    texts = [" ".join(c["text"] for c in r.claims) for r in runs]
+    agree = rb.parse_judge(backend.chat(rb.judge_messages(q, *texts), max_tokens=3)) if any(texts) else None
+    robust_rows.append({"question": q[:120], "overlap": rb.overlap(runs[0].retrieved, runs[1].retrieved),
+                        "same_status": runs[0].status == runs[1].status, "status": [r.status for r in runs],
+                        "agree": agree, "search_query_same": runs[0].search_query == runs[1].search_query,
+                        "resolved_projects": runs[0].resolved_projects, "rating_facts": any(
+                            f.get("kind") == "rating" for f in runs[0].facts.values())})
+robustness = rb.summarise(robust_rows)
+print(json.dumps(robustness, indent=1, default=str))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 7. Metrics on the TEST half, MLflow, results table, regression check
 
 # COMMAND ----------
@@ -398,7 +429,8 @@ final = {"retrieval_path": retrieval_path, "n_questions": len(results), "n_test"
          "by_country_test": {k: v for k, v in summary_test.items() if k != "all"},
          "guardrail_removals_test": {"mechanical": mechanical_removed, "verifier": verifier_totals},
          "judge_second_opinion": {"share_supported": faithfulness, "n_judged": len(judged)},
-         "rating_answer_accuracy": rating_accuracy, "prompt_injection": injection_report}
+         "rating_answer_accuracy": rating_accuracy, "prompt_injection": injection_report,
+         "phrasing_robustness": robustness}
 with mlflow.start_run(run_name=f"rag_eval_{retrieval_path}"):
     mlflow.log_params({"retrieval_path": retrieval_path, "n_test": len(test_rows), "threshold": threshold})
     mlflow.log_metrics({k.replace("@", "_at_"): v for k, v in summary_test["all"].items() if isinstance(v, (int, float)) and v is not None})

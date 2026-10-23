@@ -1,0 +1,22 @@
+%% RAG request flow (from docs/10 Diagram 2, updated 2026-10-23: routing, French pass, pure-vector gate; all run)
+flowchart TB
+  subgraph R1["Facts: numbers never come from the LLM"]
+    direction LR
+    IN["Package or question<br/>country · category · method · value · as-of"] --> F1["1 · SQL<br/>similar past contracts"] --> F2["2 · Models<br/>duration range · re-bid rate"]
+  end
+  subgraph R2["Evidence: find and filter passages"]
+    direction LR
+    F3["3 · Graph scoping<br/>outcome questions → ICR / IEG"] --> S["4 · Hybrid search<br/>project · lessons · notices<br/>+ French pass for Mali"] --> RR["5 · Rerank<br/>IEG > ICR > ISR · ID bonus"] --> G{"6 · Gate<br/>cosine ≥ 0.682<br/>or exact ID"}
+  end
+  subgraph R3["Answer: every claim checked"]
+    direction LR
+    QZ["Quarantine<br/>instruction-like text"] --> GEN["7 · Llama 3.3 70B<br/>JSON claims + citations"] --> MC["8a · Citation, number<br/>and ID checks"] --> VF["8b · One verifier call<br/>fails closed"] --> OUT["Cited answer<br/>+ removed-claim count"]
+  end
+  R1 --> R2 --> R3
+
+  classDef step fill:#FFFFFF,stroke:#0F5257,color:#0F2A2E
+  classDef gate fill:#F3B23C,stroke:#B5781A,color:#1B1B1B
+  classDef out fill:#0F5257,stroke:#0F5257,color:#FFFFFF
+  class IN,F1,F2,F3,S,RR,QZ,GEN,MC,VF step
+  class G gate
+  class OUT out
