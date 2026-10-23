@@ -130,6 +130,13 @@ real workload.
   primary; older copies stay searchable by date.
 - **Embedding input** = context header (doc type, project, date, section path) + text, with `databricks-gte-large-en`
   (1,024 dimensions [V]); incremental by `(chunk_id, text_hash)`.
+- **Languages.** `databricks-gte-large-en` is an **English-only** embedding model. In the demo slice 196 of 9,564
+  passages are French (Mali notices and procurement plans, part of one ICR) [M]; they are translated to English **for
+  embedding only** (notebook 22: the original text is what is shown, cited and quote-checked), so an English question
+  can find them. **Production option [P]:** the Bank's portfolio is multilingual (French, Spanish, Portuguese, Arabic,
+  Russian, Chinese...), so the production index should use a **multilingual embedding model** served on Databricks
+  (to be selected and verified, e.g. an open multilingual model such as BGE-M3 or multilingual-E5), which removes the
+  translation step and its cost; translation remains a fallback for a model that is English-only.
 
 ---
 

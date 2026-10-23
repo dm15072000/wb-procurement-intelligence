@@ -316,6 +316,9 @@ endpoints (no new serving endpoint):
 Model for every generation, extraction, verifier, question-writing and judge call: **Meta Llama 3.3 70B Instruct**
 through the Foundation Model API endpoint `databricks-meta-llama-3-3-70b-instruct` (pay-per-token, temperature 0).
 Embeddings: `databricks-gte-large-en` (1,024 dimensions). Both verified READY on 2026-10-20 (docs/04 §4).
+**The embedding model is English-only** (2026-10-22): the 196 French passages of the slice are embedded from an
+English translation made by notebook 22 (Llama 3.3 70B, 196 calls; numbers checked), while citations and quotes always
+use the original text. Production option [P]: a multilingual embedding model instead (see docs/08 §3.4).
 
 | Notebook | Rule | Estimate before running [A] |
 |---|---|---|

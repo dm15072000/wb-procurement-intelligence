@@ -276,7 +276,7 @@ print(json.dumps(gate_report, indent=2))
 spark.sql(f"""CREATE TABLE IF NOT EXISTS {ML}.rag_eval_lenient_judgments
               (qid STRING, question STRING, chunk_id STRING, verdict BOOLEAN, raw STRING, judged_at TIMESTAMP)""")
 qtext = {x["qid"]: x["question"] for x in results}
-judged = {(r.qid, r.chunk_id): r.verdict
+lenient_judged = {(r.qid, r.chunk_id): r.verdict
           for r in spark.table(f"{ML}.rag_eval_lenient_judgments").collect() if qtext.get(r.qid) == r.question}
 test_rows = [x for x in results if x["split"] == "test"]
 need_ids = {c for x in results for c in (x["gold"] or [])[:1] + x["retrieved"][:10]}
@@ -284,20 +284,20 @@ texts = {r.chunk_id: r.text for r in spark.table(f"{D}.chunk_embeddings").select
          .where(F.col("chunk_id").isin(list(need_ids))).collect()} if need_ids else {}
 for x in results:
     x["gold_lang"] = lg.detect(texts.get((x["gold"] or [None])[0])) if x["gold"] else None
-pairs = ln.to_judge(test_rows, judged, k=10)
+pairs = ln.to_judge(test_rows, lenient_judged, k=10)
 new = []
 by_qid = {x["qid"]: x for x in results}
 for qid, cid in pairs:
     x = by_qid[qid]
     raw = backend.chat(ln.build_messages(x["question"], texts.get(x["gold"][0]), texts.get(cid)), max_tokens=3)
     v = ln.parse(raw)
-    judged[(qid, cid)] = v
+    lenient_judged[(qid, cid)] = v
     new.append((qid, x["question"], cid, v, (raw or "")[:20], datetime.now(timezone.utc)))
 if new:
     spark.createDataFrame(new, "qid string, question string, chunk_id string, verdict boolean, raw string, judged_at timestamp") \
          .write.mode("append").saveAsTable(f"{ML}.rag_eval_lenient_judgments")
-lenient_info = {"pairs_judged_this_run": len(new), "cached": len(pairs) == 0 and len(judged) > 0,
-                "yes": sum(v is True for (q, c), v in judged.items() if q in {x["qid"] for x in test_rows}),
+lenient_info = {"pairs_judged_this_run": len(new), "cached": len(pairs) == 0 and len(lenient_judged) > 0,
+                "yes": sum(v is True for (q, c), v in lenient_judged.items() if q in {x["qid"] for x in test_rows}),
                 "unparsed": sum(v is None for _, _, _, v, _, _ in new)}
 print(lenient_info)
 
@@ -358,7 +358,7 @@ mechanical_removed = sum(r.get("removed", 0) for r in reports) - verifier_totals
 # COMMAND ----------
 
 summary_test = ev.summarise(test_rows, "country_iso3")
-lenient_test = ln.lenient_rows(test_rows, judged)
+lenient_test = ln.lenient_rows(test_rows, lenient_judged)
 summary_test_lenient = ev.summarise(lenient_test, "country_iso3")
 by_kind_lenient = {k: ev.summarise([x for x in lenient_test if x["kind"] == k])["all"]
                    for k in kinds if any(x["kind"] == k for x in test_rows)}
@@ -366,7 +366,7 @@ by_kind_lenient = {k: ev.summarise([x for x in lenient_test if x["kind"] == k])[
 fr_rows = [x for x in test_rows if x.get("gold_lang") == "fr"]
 french = {"qids": [x["qid"] for x in fr_rows],
           "strict": ev.summarise(fr_rows)["all"] if fr_rows else None,
-          "lenient": ev.summarise(ln.lenient_rows(fr_rows, judged))["all"] if fr_rows else None,
+          "lenient": ev.summarise(ln.lenient_rows(fr_rows, lenient_judged))["all"] if fr_rows else None,
           "retrieved_gold_rank": {x["qid"]: (x["retrieved"].index(g) + 1 if (g := next((c for c in x["retrieved"]
                                   if c in (x["gold"] or [])), None)) else None) for x in fr_rows}}
 # Gate behaviour (pure vector similarity, calibrated on the calibration half)
