@@ -257,6 +257,15 @@ def plan_screen():
     m3.caption("Heuristic only, not a probability: it did not track the amendment events extracted from reports "
                "(Spearman r = -0.08, notebook 70). " + "; ".join(f["reason"] for f in s["factors"]) +
                (f" Unknown: {', '.join(s['unknown'])}." if s["unknown"] else ""))
+    opts = [f for f in facts if f.get("kind") == "method_option"]
+    if opts:
+        st.subheader("Market approach options: how similar packages were procured")
+        st.dataframe(pd.DataFrame([{"method": f["method"], "market approach": f["market"], "contracts": f["n"],
+                                    "share": f"{100 * f['share']:.0f}%" if f["share"] is not None else "",
+                                    "median notice → signing (days)": f["median_days"]} for f in opts]),
+                     hide_index=True, use_container_width=True)
+        st.caption("Descriptive history from road projects (same category, 0.3–3x the value), not a recommendation; "
+                   "durations only where a notice matched the contract.")
     st.subheader("Similar past contracts")
     sims = [f for f in facts if f.get("kind") == "similar_contract"]
     if sims:

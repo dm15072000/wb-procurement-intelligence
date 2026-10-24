@@ -48,3 +48,20 @@ def to_judge(rows, judged, k=10):
             if c not in r["gold"] and (r["qid"], c) not in judged:
                 pairs.append((r["qid"], c))
     return pairs
+
+
+def precision_at_k(rows, judged, k=5):
+    """Mean precision@k over answerable rows: strict = share of the top k that are gold passages (at most 1/k per
+    question with one gold passage); lenient = share that are gold OR judged to contain the answer. rows: dicts with
+    qid, gold, retrieved, should_refuse; judged: {(qid, chunk_id): bool}."""
+    strict, lenient = [], []
+    for x in rows:
+        if x.get("should_refuse"):
+            continue
+        top = (x.get("retrieved") or [])[:k]
+        gold = set(x.get("gold") or [])
+        strict.append(sum(c in gold for c in top) / k)
+        lenient.append(sum(c in gold or bool(judged.get((x["qid"], c))) for c in top) / k)
+    n = len(strict)
+    return {"n": n, f"precision@{k}_strict": round(sum(strict) / n, 3) if n else None,
+            f"precision@{k}_lenient": round(sum(lenient) / n, 3) if n else None}

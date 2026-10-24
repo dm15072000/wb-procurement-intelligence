@@ -393,6 +393,7 @@ print(json.dumps(robustness, indent=1, default=str))
 summary_test = ev.summarise(test_rows, "country_iso3")
 lenient_test = ln.lenient_rows(test_rows, lenient_judged)
 summary_test_lenient = ev.summarise(lenient_test, "country_iso3")
+precision_test = ln.precision_at_k(test_rows, lenient_judged, k=5)   # KPI: retrieval precision (2026-10-24)
 by_kind_lenient = {k: ev.summarise([x for x in lenient_test if x["kind"] == k])["all"]
                    for k in kinds if any(x["kind"] == k for x in test_rows)}
 # French-source questions (gold passage detected as French), wherever they sit; strict and lenient
@@ -430,7 +431,7 @@ final = {"retrieval_path": retrieval_path, "n_questions": len(results), "n_test"
          "guardrail_removals_test": {"mechanical": mechanical_removed, "verifier": verifier_totals},
          "judge_second_opinion": {"share_supported": faithfulness, "n_judged": len(judged)},
          "rating_answer_accuracy": rating_accuracy, "prompt_injection": injection_report,
-         "phrasing_robustness": robustness}
+         "phrasing_robustness": robustness, "precision_test": precision_test}
 with mlflow.start_run(run_name=f"rag_eval_{retrieval_path}"):
     mlflow.log_params({"retrieval_path": retrieval_path, "n_test": len(test_rows), "threshold": threshold})
     mlflow.log_metrics({k.replace("@", "_at_"): v for k, v in summary_test["all"].items() if isinstance(v, (int, float)) and v is not None})

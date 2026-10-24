@@ -227,6 +227,51 @@ class DatabricksBackend:
                                    f"{_fmt_usd(r['total_amount_usd'])}, signed {r['signing_date']}{dur}. "
                                    f"Description: {(r['description'] or '')[:160]}. "
                                    f"[source {r['source_dataset']}; coverage {r['coverage_status']}]")})
+        return facts + self.method_options(pkg)
+
+    def method_options(self, pkg, top=4):
+        """Market-approach options (planning, assessment §2): how past road-project contracts of the same category and
+        value band (0.3-3x) were procured, by method and market approach, with the median notice-to-signing time where
+        a duration is matched. Descriptive history, not a recommendation model."""
+        if not pkg.get("category"):
+            return []
+        where = ["c.in_universe", "c.signing_date <= :as_of", "c.procurement_category = :category",
+                 "c.procurement_method IS NOT NULL"]
+        params = {"as_of": str(pkg.get("as_of") or date.today()), "category": pkg["category"]}
+        if pkg.get("amount_usd"):
+            where.append("c.total_amount_usd BETWEEN :lo AND :hi")
+            params.update(lo=0.3 * pkg["amount_usd"], hi=3 * pkg["amount_usd"])
+        rows = self.sql(f"""
+            WITH ifb AS (   -- market approach stated in the tender's invitation for bids (STEP awards rarely carry it)
+              SELECT tender_key,
+                     max(CASE WHEN lower(notice_text) RLIKE 'international (competitive|open)|open international'
+                              THEN 1 ELSE 0 END) AS intl,
+                     max(CASE WHEN lower(notice_text) RLIKE 'national (competitive|open)|open national'
+                              THEN 1 ELSE 0 END) AS natl
+              FROM {CATALOG}.silver.notices WHERE notice_type = 'Invitation for Bids' GROUP BY tender_key)
+            SELECT c.procurement_method AS method,
+                   coalesce(c.market_approach,
+                            CASE WHEN i.intl = 1 AND i.natl = 0 THEN 'international (from notice)'
+                                 WHEN i.natl = 1 AND i.intl = 0 THEN 'national (from notice)' END,
+                            'not recorded') AS market,
+                   count(*) AS n, count(d.duration_days) AS n_dur,
+                   percentile(d.duration_days, 0.5) AS median_days
+            FROM {CATALOG}.silver.contracts c
+            LEFT JOIN {CATALOG}.silver.tender_durations d ON c.contract_key = d.contract_key
+            LEFT JOIN ifb i ON d.tender_key = i.tender_key
+            WHERE {' AND '.join(where)}
+            GROUP BY 1, 2 ORDER BY n DESC""", params)
+        total = sum(int(r["n"]) for r in rows)
+        facts = []
+        for r in rows[:top]:
+            dur = (f", median notice-to-signing {int(round(float(r['median_days'])))} days (n={r['n_dur']})"
+                   if r.get("median_days") is not None else ", no matched durations")
+            facts.append({"kind": "method_option", "method": r["method"], "market": r["market"], "n": int(r["n"]),
+                          "share": round(int(r["n"]) / total, 3) if total else None,
+                          "median_days": r.get("median_days"),
+                          "text": (f"Past {pkg['category']} contracts in road projects of similar value: "
+                                   f"{r['method']}, market approach {r['market']}, was used for {r['n']} of {total}"
+                                   f"{dur}. Descriptive history of what was used, not a recommendation.")})
         return facts
 
     def _context(self, pkg):

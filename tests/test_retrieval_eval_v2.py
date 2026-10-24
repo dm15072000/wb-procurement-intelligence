@@ -75,3 +75,12 @@ def test_calibration_grid_follows_the_score_scale():
     rows.append({"top_score": 0.0025, "should_refuse": True})
     th, rep = eq.calibrate_threshold(rows)
     assert th == 0.0032 and rep["answerable_passing"] >= 0.9 and rep["refusals_blocked_by_gate"] == 1.0
+
+
+def test_precision_at_k():
+    from src.evaluation import lenient as ln
+    rows = [{"qid": "a", "gold": ["g"], "retrieved": ["g", "x", "y", "z", "w"], "should_refuse": False},
+            {"qid": "b", "gold": ["h"], "retrieved": ["p", "q"], "should_refuse": False},
+            {"qid": "c", "gold": [], "retrieved": ["r"], "should_refuse": True}]
+    out = ln.precision_at_k(rows, {("a", "x"): True, ("b", "p"): True, ("b", "q"): False}, k=5)
+    assert out == {"n": 2, "precision@5_strict": 0.1, "precision@5_lenient": 0.3}
