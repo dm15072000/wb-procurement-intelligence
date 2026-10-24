@@ -10,6 +10,7 @@ Sync the repo to a Databricks Git folder first. Every notebook imports tested co
 | done | `10_ingest_structured.py` | Structured sources → raw JSONL → bronze (resumable; `run_tag` widget) | yes | ran 2026-10-21; no re-run needed |
 | **1** | `11_silver_structured.py` | Bronze → silver. **Re-run (2026-10-22):** standard category / method values, explicit joint-award amount rule, new columns | no | re-run |
 | **2** | `30_entity_resolution.py` | Supplier resolution (R2 fix 2026-10-21; must follow 11 because award rows changed) | no | re-run |
+| **2b** | `13_project_financing.py` | Development objective (PDO) and financiers / co-financing per universe project from the Projects API (151 calls, retries + backoff) → `silver.project_pdo`, `silver.project_financing` | yes (Projects API) | new 2026-10-24 |
 | **3** | `12_data_quality.py` | **Data-quality gate**, checks 2–7, fails loudly; joint-award check; demo-project coverage report | no | new |
 | **4** | `20_ingest_documents.py` | Documents: only if not already done. Re-running is safe and skips what exists | yes | optional |
 | **5** | `40_build_graph.py` | Graph tables + contract↔passage links (after 30) | no | re-run |

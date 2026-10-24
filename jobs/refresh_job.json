@@ -32,6 +32,17 @@
       }
     },
     {
+      "task_key": "project_financing",
+      "depends_on": [
+        {
+          "task_key": "silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "<GIT_FOLDER>/notebooks/13_project_financing"
+      }
+    },
+    {
       "task_key": "documents",
       "depends_on": [
         {

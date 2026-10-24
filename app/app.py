@@ -278,6 +278,18 @@ def monitor_screen():
     if not p:
         return
     pid = p["project_id"]
+    try:   # development objective and financiers (notebook 13); skipped quietly if not built yet
+        pdo = run_sql(f"SELECT pdo FROM {CATALOG}.silver.project_pdo WHERE project_id = :p", {"p": pid})
+        fin = run_sql(f"""SELECT financier, financier_type, loan_code, is_cofinancing
+                           FROM {CATALOG}.silver.project_financing WHERE project_id = :p""", {"p": pid})
+    except Exception:
+        pdo, fin = [], []
+    if pdo and pdo[0]["pdo"]:
+        st.markdown(f"**Development objective:** {pdo[0]['pdo']}")
+    if fin:
+        co = [f for f in fin if f["is_cofinancing"]]
+        st.caption("Financing: " + "; ".join(f"{f['financier']} ({f['financier_type']}, {f['loan_code']})" for f in fin)
+                   + (f" · co-financing from {len(co)} source(s)" if co else " · no co-financing recorded"))
     flags = run_sql(f"SELECT flag, reason, evidence FROM {CATALOG}.gold.early_warnings WHERE project_id = :p", {"p": pid})
     st.subheader("Early-warning flags")
     st.caption("A flag means CHECK, not LATE: an overdue tender may also be a contract that did not match its notice "
