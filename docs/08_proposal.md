@@ -241,8 +241,9 @@ the claim it asks for is rejected. The app shows the sources (title, type, date,
 structured facts, and how many claims the guardrails removed.
 
 **Measured on the held-out test half (26 questions, final run 2026-10-23) [M]:** recall@5 **0.57 strict / 0.83
-lenient**; citation validity **1.00**; claim support **0.893** after guardrails (the verifier removed 9 of 99 claims;
-0 mechanical removals); an independent judge found **97.5%** of 40 kept claims supported; refusal accuracy **3 / 3**; rating-answer accuracy 1 / 1 (after routing to the
+lenient**; citation validity **1.00**; claim support **0.86–0.905** after guardrails across the evaluation runs (the
+verifier removes about 6–9 claims per run; 0 mechanical removals); an independent judge found **97.5–100%** of 40 kept
+claims supported. *Run-to-run variance:* Same frozen questions and temperature 0, yet the LLM's answers and the verifier's verdicts vary slightly between runs, so answer-quality metrics are reported as the range over the 2026-10-23 evaluation runs. Also measured: refusal accuracy **3 / 3**; rating-answer accuracy 1 / 1 (after routing to the
 ICR; it was wrong before); the planted injection passage was quarantined and its claim did not survive.
 **The retrieval gate is a weak first filter:** calibrated cosine threshold 0.682; off-topic questions score 0.66–0.70
 and answerable ones 0.66–0.86 (median 0.76), so the distributions **overlap**. On the test half it blocked 1 of 23
@@ -280,7 +281,7 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 
 | Phase | Scope | Exit criteria (go / no-go) [P] |
 |---|---|---|
-| 0. Offline (this work) | roads, 5 countries, frozen evaluation set | recall@5 ≥ 0.7; claim support ≥ 0.9 after guardrails; duration P50 beats baseline; P80 coverage 0.7–0.9 · **Status [M]: claim support 0.893 ✗ (just under 0.9), P80 coverage 0.81 ✔, P50 level with baseline (≈), recall@5 0.57 strict / 0.83 lenient (✘ strict, ✔ lenient)** |
+| 0. Offline (this work) | roads, 5 countries, frozen evaluation set | recall@5 ≥ 0.7; claim support ≥ 0.9 after guardrails; duration P50 beats baseline; P80 coverage 0.7–0.9 · **Status [M]: claim support 0.86–0.905 (≈ the 0.9 target), P80 coverage 0.81 ✔, P50 level with baseline (≈), recall@5 0.57 strict / 0.83 lenient (✘ strict, ✔ lenient)** |
 | 1. Shadow pilot (3 months) | ~10 procurement specialists in one region, roads; outputs advisory only | ≥ 60% weekly active; ≤ 5% answers flagged wrong-source; no unsupported claim in a 100-answer audit |
 | 2. Expansion | all transport + energy/water, all countries; Vector Search scaled up; docs parsed for every active project | metrics hold per sector; refresh job ≤ 4 h |
 | 3. Integration | links into STEP planning screens (proposal only); internal data (amendments, bid evaluation reports) under access control | security and data-governance sign-off |
@@ -290,7 +291,7 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 | KPI | Type | Measured how |
 |---|---|---|
 | Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set (test half; the refusal threshold is set on the other half), per country and per question kind incl. tender design: strict 0.57 / lenient 0.83 [M] |
-| Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61: 1.00 / 0.893 / 97.5% / 3 of 3 [M] |
+| Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61: 1.00 / 0.86–0.905 / 97.5–100% / 3 of 3 [M, range over runs] |
 | Duration P50 MAE vs baseline, P80 coverage | offline | notebook 50: 100.4 vs 100.8 days; 0.81 [M] |
 | Re-bid Brier score vs global rate | offline | notebook 51: 0.032 vs 0.039 [M] |
 | Planning cycle time (procurement plan drafting) | online | before/after timing in pilot teams [P] |

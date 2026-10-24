@@ -38,8 +38,8 @@ Speaker rule: say "measured", "proposed" or "assumption" for every claim; never 
    rerank → gate → LLM → guardrails). Live demo from the app: "Plan a package" with sources and removed-claim count.
 
 10. **Guardrails and conflicts**: mechanical citation / number / ID checks, then one batched claim verifier;
-    quarantine for injected instructions. Numbers (test half): citation validity 1.00, claim support 0.893 (9 of 99
-    claims removed), independent judge 97.5% of 40, refusals 3 / 3, injection quarantined. Conflicts: IEG > ICR >
+    quarantine for injected instructions. Numbers (test half): citation validity 1.00, claim support 0.86–0.905
+    (range over evaluation runs: LLM run-to-run variance), independent judge 97.5–100% of 40, refusals 3 / 3, injection quarantined. Conflicts: IEG > ICR >
     latest ISR, all ratings shown, flags raised (1 IEG downgrade, 2 ISR volatility).
 
 11. **Evaluation, honestly**: 52 frozen questions, halves by project, threshold set on one half. Numbers: recall@5
@@ -53,7 +53,7 @@ Speaker rule: say "measured", "proposed" or "assumption" for every claim; never 
     regression eval → dashboard), incremental at every step; feedback buttons → ops tables → evaluation set.
 
 13. **KPI dashboard and rollout**: AI/BI dashboard (data health, model quality, assistant quality, usage = test only).
-    Phases 0–3 with go/no-go criteria; phase 0 status: claim support 0.893 (just under 0.9), P80 ✔, P50 ≈ baseline, recall strict ✘ /
+    Phases 0–3 with go/no-go criteria; phase 0 status: claim support 0.86–0.905 (≈ 0.9), P80 ✔, P50 ≈ baseline, recall strict ✘ /
     lenient ✔. Business KPIs (cycle time, adoption) are proposed pilot targets, not measured.
 
 14. **Limitations and next steps**: small eval set; same-family verifier; no amendment labels; French retrieval;

@@ -82,9 +82,12 @@ def backend():
         info = {"population": "prior-review", "n_train": mv.tags.get("n_train"), "mae_p50": mv.tags.get("heldout_mae_p50")}
         if model is None:
             info["load_error"] = "the model registry returned no model"
+        else:
+            info["version"] = mv.version
+            print(f"duration model loaded: {dt.DURATION_MODEL} version {mv.version}", file=sys.stderr, flush=True)
     except Exception as e:      # shown on the Plan screen, so a missing model is never silent
         info = {"load_error": f"{type(e).__name__}: {str(e)[:200]}"}
-        print("duration model not loaded:", repr(e), file=sys.stderr)
+        print("duration model not loaded:", repr(e), file=sys.stderr, flush=True)
     return dt.DatabricksBackend(run_sql, w, vs_index=idx, fallback_rows=fallback, duration_model=model,
                                 duration_model_info=info), ("Vector Search" if idx else "cosine fallback")
 
@@ -340,6 +343,9 @@ PAGES = {"Plan a package": plan_screen, "Monitor a project": monitor_screen, "As
          "Data coverage": coverage_screen}
 choice = st.sidebar.radio("Screen", list(PAGES))
 st.sidebar.caption("World Bank open data · Databricks · every claim cited")
+_minfo = backend()[0].duration_model_info or {}     # loaded once per app process; status also goes to the app log
+st.sidebar.caption(f"Duration model: version {_minfo['version']} loaded" if _minfo.get("version")
+                   else f"Duration model not loaded: {_minfo.get('load_error', 'unknown reason')}")
 if kpi_dashboard_url():
     st.sidebar.link_button("KPI dashboard", kpi_dashboard_url())
 PAGES[choice]()

@@ -425,6 +425,11 @@ P153548). Final run (18:54 UTC): recall@5 **0.57 strict / 0.83 lenient**, citati
 (verifier removed 6 of 84 claims), independent judge **100%** of 40, refusal accuracy 3 / 3, French-source 0.33,
 answerable blocked by the gate 1 of 23.
 
+**Answer-quality metrics as ranges (2026-10-23):** across the valid evaluation runs of the day (17:01, 17:51, 18:54
+UTC; the 18:42 run with the faulty name matcher is excluded), **claim support 0.86–0.905** and **independent judge
+97.5–100%**; citation validity 1.00 and refusal accuracy 3 / 3 in every run. Same frozen questions and temperature 0, yet the LLM's answers and the verifier's verdicts vary slightly between runs, so answer-quality metrics are reported as the range over the 2026-10-23 evaluation runs. The proposal, slides and
+Q&A quote these ranges.
+
 **Phrasing robustness (new section 6b of notebook 61):** 5 questions × 2 phrasings (plain and "Tell me in detail: ...").
 **Retrieved top 5 identical for 5 of 5**; same status 5 of 5; the LLM judge found the two answers agree for **4 of 5**.
 The one disagreement is the app's Yunnan question: same passages and rating facts, but the detailed answer's claims

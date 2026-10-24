@@ -51,7 +51,7 @@ Status: **✔ done** (built, run on Databricks, measured) · **◐ partial** (bu
 
 | Requirement | Status | Evidence | Gap |
 |---|---|---|---|
-| Validation layers against hallucination, every claim anchored | ✔ | citation validity 1.00, claim support 0.893, judge 97.5% of 40, injection quarantined | verifier and judge are the same model family as the generator |
+| Validation layers against hallucination, every claim anchored | ✔ | citation validity 1.00, claim support 0.86–0.905 and judge 97.5–100% (range over runs), injection quarantined | verifier and judge are the same model family as the generator |
 | Conflicting evidence (ICR vs ISR) | ✔ | IEG > ICR > latest ISR, all ratings shown, flags (1 IEG downgrade, 2 ISR volatility) | ratings sample check (20) **[R]** |
 
 ## §4 Module 4: Continuous learning and implementation

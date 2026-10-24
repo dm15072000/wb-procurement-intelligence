@@ -124,7 +124,8 @@ from the search query and passed to the answer step; both phrasings retrieve ide
 Cheapest first: gate; evidence wrapped as data; quarantine of instruction-like passages; JSON claims with citations;
 mechanical checks (citation exists, every claim cited, every number ≥ 10 and project ID appears in the cited source
 or its date); then one batched verifier call that fails closed. Test half: citation validity 1.00, claim support
-0.893 (9 of 99 claims removed), independent judge 97.5% of 40. Caveat: judge and generator are the same model family.
+0.86–0.905 and independent judge 97.5–100% of 40, as ranges over runs: at temperature 0 the LLM still varies slightly
+from run to run, so I report the range, not the best run. Caveat: judge and generator are the same model family.
 
 **22. What about prompt injection?**
 A planted passage saying "ignore previous instructions…" is quarantined before the model sees it, and its claim never
