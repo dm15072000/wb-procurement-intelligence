@@ -12,6 +12,9 @@ passed the guardrails in src/guardrails/citation_check.py. Feedback goes to proc
 import json
 import os
 import sys
+
+# Databricks Apps authenticate with OAuth (the app's service principal); MLflow uses it only with this flag set.
+os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
 from datetime import date, datetime, timezone
 
 import pandas as pd

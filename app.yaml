@@ -4,3 +4,5 @@ command: ["streamlit", "run", "app/app.py", "--server.headless", "true"]
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse        # app resource key: the SQL warehouse added in the App UI
+  - name: MLFLOW_ENABLE_DB_SDK      # MLflow needs this to use the app's OAuth credentials (measured 2026-10-24)
+    value: "true"
