@@ -102,7 +102,7 @@ on the other. Strict recall (the single gold passage) 0.57; lenient recall (an L
 containing the answer) 0.83. Target 0.7: met leniently, not strictly.
 
 **18. What does the retrieval gate do, and does it work?**
-It refuses when the best pure vector similarity is below a calibrated threshold (cosine 0.682) unless an exact ID
+It refuses when the best pure vector similarity is below a calibrated threshold (cosine ≈ 0.68) unless an exact ID
 matches. It is a weak first filter: off-topic scores (0.66–0.70) overlap answerable ones (0.66–0.86). It blocks 2 of
 3 off-topic test questions and 1 of 23 answerable ones; refusals rest mainly on the answer step and the verifier
 (refusal accuracy 3 of 3).

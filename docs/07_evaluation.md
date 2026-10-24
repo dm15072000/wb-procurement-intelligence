@@ -436,6 +436,22 @@ The one disagreement is the app's Yunnan question: same passages and rating fact
 differ from the plain one's (which claims survive the guardrails varies). Retrieval is now stable; the remaining
 variation is in generation.
 
+### 4d. Retrieval precision and project financing (2026-10-24) [M]
+
+**Retrieval precision@5** (test half, 23 answerable questions; from the stored top-5 passages, gold passages and the
+cached LLM judgements of the 18:54 run; no new LLM calls): **strict 0.11** (share of the top 5 that are the gold
+passage; at most 0.20 with one gold passage per question), **lenient 0.50** (gold, or judged to contain the answer).
+Notebook 61 now reports it (`precision_test`).
+
+**Development objectives and financing (notebook 13):** Projects API for the 151 road-universe projects, 151 fetched,
+0 failed; PDO for **148**; **173 financing lines, all IBRD (45) or IDA (128)**: no co-financier appears in the public
+Projects API fields for these projects. Shown on the Monitor screen.
+
+**Market-approach options (Plan screen):** similar packages by method × market approach with median notice-to-signing
+time; the market approach is rarely in STEP award data (null for all 7,692 DS00005 universe contracts), so it is taken
+from the invitation-for-bids wording where stated ("national/international competitive or open") and labelled
+"from notice". Example: works of $0.6–6M: Request for Bids, national market from notice, 467 contracts, median 109 days.
+
 ## 5. Early warnings and backtest (notebook 70)
 
 **Run 2026-10-22 [M]:** open tenders **138** (after excluding 25 rounds superseded by a re-advertisement and 213 notices

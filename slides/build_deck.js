@@ -304,7 +304,7 @@ s.addImage({ path: path.join(IMG, "rag_flow.png"), x: 0.75, y: 1.45, w: 11.8, h:
 s.addNotes(`RAG flow (2 min). Source: docs/10 diagram 2, updated with routing, the French pass and the pure-vector gate. Live demo here if time allows: "Plan a package" in the app.
 "This is a fixed sequence of tools, not a free-roaming agent, so every answer is reproducible and the same code runs in my unit tests, my evaluation and the app."
 Row 1 - facts: SQL finds similar past contracts signed before the as-of date, with their coverage status; the models give the duration range and the re-bid-or-cancellation rate. Numbers never come from the LLM.
-Row 2 - evidence: the graph scopes the search to the right projects; outcome and rating questions are routed to ICR / ICR Review / PPAR first. Hybrid search (vector + keyword, because embeddings are bad at codes like GYTJ201B) runs in three scopes: the project, lessons across the corpus, and past notices for planning. For French-speaking countries the question is also searched in French. Rerank favours independent reviews (IEG > ICR > ISR) and exact identifier matches, at most 2 passages per document. The gate needs cosine ≥ 0.682 or an exact ID match.
+Row 2 - evidence: the graph scopes the search to the right projects; outcome and rating questions are routed to ICR / ICR Review / PPAR first. Hybrid search (vector + keyword, because embeddings are bad at codes like GYTJ201B) runs in three scopes: the project, lessons across the corpus, and past notices for planning. For French-speaking countries the question is also searched in French. Rerank favours independent reviews (IEG > ICR > ISR) and exact identifier matches, at most 2 passages per document. The gate needs cosine ≥ 0.68 or an exact ID match.
 Row 3 - answer: passages with instruction-like text are withheld; Llama 3.3 70B at temperature 0 writes JSON claims with citation IDs; code checks every citation, number and ID against the cited text; one batched verifier call removes unsupported claims, failing closed. The answer shows how many claims were removed. Every request is logged.`);
 
 // ---------- Journey step 2: Tender design ----------
@@ -507,7 +507,7 @@ para(s, "Guards: shared-ID, common-name, numbers, joint venture, distinctive wor
 s.addNotes(`Backup - entity resolution.
 Rules in order: R1 same supplier ID; R2 same cleaned name and country; R3 near-identical name and country, firms only. Six guards stop bad chains: shared-ID, common-name, numbers in the name, joint ventures, a distinctive-word check and a chain-length limit. The largest cluster fell from 119 to 40 records after the guards.
 The placeholder "INDIVIDUAL CONSULTANT" had merged 176 people before the fix; masked names without an ID are now never merged and get NULL history.
-Fuzzy-rule precision 43-47 of 50 on a random sample, judged by me as the assistant; the author's spot-check is still pending. Supplier names keep non-Latin scripts; only accents are removed. Legal-entity resolution is future work.`);
+Fuzzy-rule precision 43-47 of 50 on a random sample, assistant-judged sample; my own spot-check is still pending. Supplier names keep non-Latin scripts; only accents are removed. Matching to registered companies is future work.`);
 
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
 s.addText("Backup: extraction from reports", { placeholder: "title" });

@@ -1,3 +1,5 @@
+> **Superseded (2026-10-24):** this is the status as of 2026-10-21/22. The current status is in [00_submission_summary.md](00_submission_summary.md) and the requirement-by-requirement audit in [12_final_audit.md](12_final_audit.md).
+
 # 00 — Status against the assessment (2026-10-21)
 
 **Done & measured** = ran on Databricks, numbers in docs/06. **Built & tested** = code written, unit-tested locally,

@@ -1,87 +1,80 @@
-# 12 — Final audit against assessment.md (2026-10-23)
+# 12 — Final audit against assessment.md (re-read line by line, 2026-10-24)
 
-Every requirement in `assessment.md`, where it is answered, what evidence exists, and what is still missing.
-Status: **✔ done** (built, run on Databricks, measured) · **◐ partial** (built, but limited or not fully exercised) ·
-**✘ missing** (not built; proposed or a stated gap).
+Each requirement in `assessment.md` §2–§5, with its status, the evidence (file or table) and our measured numbers.
+**Done** = built, run on Databricks and measured · **Partial** = built and run, but limited or not fully exercised ·
+**Proposed** = written up in docs/08 with the reason and how it would be built · **Missing** = not available.
+Items fixed during this audit are marked *(fixed 2026-10-24)*.
 
 ## §2 Lifecycle stages
 
-| Stage | Status | Evidence | Gap |
+| Stage (assessment wording) | Status | Evidence and numbers | Gap / how it would be closed |
 |---|---|---|---|
-| Planning & strategy | ✔ | App "Plan a package": duration P20/P50/P80, re-bid or cancellation rate with interval, similar contracts, cited brief (docs/08 §4) | — |
-| Tender design & packaging | ◐ | 4,338 procurement-notice passages (scope, qualification criteria) searched for planning; PAD procurement sections; packaging lessons | SBDs, ToRs and bid evaluation reports are not public data; tender-design recall@5 is 0.33 strict / 0.67 lenient on 3 test questions |
-| Execution & monitoring | ◐ | Early warnings (91 overdue, 16 disbursement lag, 38 projects), rating timeline with conflict flags (notebook 70, app "Monitor") | Backtest has only 3 projects; overdue flags mean "check", not "late" |
-| Continuous learning | ◐ | Weekly job defined with incremental steps, champion/challenger, regression gate, dashboard; feedback tables + buttons | Job created paused and never run end to end as one job (each notebook ran individually); no pilot users, so no real feedback yet |
+| **Planning & Strategy**: realistic schedules, viable market-approach options, proactive risk mitigations from precedent | Done | App "Plan a package": duration P20/P50/P80 (P80 coverage 0.81; P50 ≈ baseline), re-bid or cancellation rate with 90% interval (13.6%, 4.6% without P157054), **market-approach options** of similar packages *(fixed 2026-10-24: method × market approach with median notice-to-signing; e.g. works of $0.6–6M: Request for Bids with a national market stated in the notice, 467 contracts, median 109 days)*, similar contracts, cited brief | STEP award data rarely records market approach; inferred from the IFB wording where stated, otherwise "not recorded" |
+| **Tender Design & Packaging**: specifications, qualification criteria, ToRs vs historical benchmarks | Partial | 4,338 procurement-notice passages (scope, lots, qualification criteria) searched in a notice scope; PAD procurement sections; 1,198 lessons; tender-design recall@5 0.33 strict / 0.67 lenient (n = 3) | SBDs, ToRs, bid evaluation reports are not public data; production: STEP tender documents under access control (docs/08 §2, §6.2 phase 3) |
+| **Execution & Monitoring**: milestones, early-warning indicators for slippage / compliance | Partial | Notebook 70 + app "Monitor": 91 overdue tenders, 16 disbursement-lag flags, 38 projects flagged; rating timeline with conflict flags; development objective and financing on the Monitor screen *(fixed 2026-10-24)* | Backtest only 3 projects; an overdue flag means "check", not "late" (about a third of contracts match a notice) |
+| **Continuous Learning**: new evaluations become intelligence | Partial | Weekly job (`jobs/refresh_job.json`, created paused, id 223004783343690): incremental parsing, extraction (dry run unless a call count is approved), incremental embedding + Delta Sync, champion/challenger, regression evaluation, KPI dashboard. Incremental sync exercised on 2026-10-23 (only the 196 changed vectors) | The full job has not yet run end to end: the scheduled run on 2026-10-24 waited for a permission approval. Each step has run individually |
 
-## §3 Open data ecosystem
+## §3 Data ecosystem
 
-| Source | Status | Evidence | Gap |
+| Source | Status | Evidence and numbers | Gap / how it would be closed |
 |---|---|---|---|
-| Major Contract Awards | ✔ | DS00005 + DS04691 + DS01004, 491,020 contracts, coverage measured per FY | — |
-| Projects & Operations | ✔ | Projects API, 22,461 projects | — |
-| Finances & disbursements | ◐ | DS00975 / DS00976 monthly snapshots (17,823 rows, 120 projects) | **co-financing structures not ingested** |
-| Procurement notices / REOIs / award summaries | ✔ | procnotices API, full text; 4,338 indexed passages | — |
-| Prior-review archives, Standard Bidding Documents | ✘ | — | not available as public data (stated) |
-| ISRs | ✔ | 199 ISRs parsed, ratings extracted | — |
-| PADs, ICRs | ✔ | 15 PADs, 16 ICRs, 36 Project Papers | — |
-| IEG evaluations | ◐ | 12 ICR Reviews (IEG) | **0 PPARs** for the 16 demo projects (none published for them); thematic sector studies not indexed (ieg site returned 403; proposed) |
-| Procurement guidance notes, CPFs | ◐ | 5 CPF / CAS documents | guidance notes not indexed (proposed) |
-| CPIA, WGI | ✔ | Indicators API, release-lag rule, missing flag | CPIA missing for 56% of country-years (kept NULL) |
+| Major Contract Awards (descriptions, values, suppliers, country, category, review type) | Done | DS00005 + DS04691 + DS01004: 491,020 contracts; coverage per FY measured (56% / 81% / 82–94%); review type "unknown" where absent | — |
+| Projects & Operations (IDs, development objectives, agencies, commitments, E&S category, status) | Done | Projects API: 22,461 projects with agency, environmental category, commitments, status; **development objective (PDO) for 148 of 151 road-universe projects** *(fixed 2026-10-24, notebook 13, `silver.project_pdo`)* | — |
+| Finances & Disbursement (schedules, commitments, **co-financing**) | Partial | DS00975 / DS00976: 17,823 monthly rows for 120 projects; **financing lines per project** *(fixed 2026-10-24, notebook 13, `silver.project_financing`: 173 lines for 151 projects)*. Measured: every line is IBRD (45) or IDA (128); **no co-financier appears in the public Projects API fields** for these projects | Co-financing amounts and non-Bank financiers are not in the public fields used; production: the Bank's internal financing data, same table shape |
+| Procurement notices: **REOIs**, **contract award summaries** | Done | procnotices API, full text; IFB + REOI text indexed for the demo projects; award notices used to measure coverage and check joint awards | — |
+| **Standard Bidding Documents** / prior-review archives | Missing (stated) | — | Not public as project data; STEP internal documents in production (docs/08 §2) |
+| ISRs (ratings, milestones, roadblocks) | Done | 199 ISRs parsed; 230 ratings by regex; events extracted with quotes | — |
+| PADs, ICRs | Done | 15 PADs, 16 ICRs, 36 Project Papers parsed | — |
+| IEG: ICR Reviews, **PPARs**, **thematic studies** | Partial | 12 ICR Reviews indexed; rule IEG > ICR > ISR | 0 PPARs exist for the 16 demo projects; thematic studies not indexed (IEG's site returned HTTP 403; available via Documents & Reports [P]) |
+| **Procurement guidance notes** and **CPFs** (policy constraints) | Partial | CPFs indexed: 3 CPFs + 2 Country Assistance Strategies (227 + 383 passages) | Guidance notes not indexed [P]: same parse → chunk → index path with a `policy` retrieval scope (docs/08 §2) |
+| CPIA, WGI | Done | Indicators API, release-lag rule, CPIA missing 56% kept NULL with a flag; ablation: the model is better without them on 500 rows (MAE 94.7 vs 100.4) | — |
 
 ## §4 Module 1: Ingestion and knowledge representation
 
-| Requirement | Status | Evidence | Gap |
+| Requirement | Status | Evidence and numbers | Gap |
 |---|---|---|---|
-| ETL for tabular CSV/JSON + PDF/Word | ◐ | APIs → Volume → bronze/silver/gold with retries and resumable pages; PDFs parsed once with `ai_parse_document` | **Word files not handled**: the Documents API served PDFs for the slice (Word path proposed only) |
-| Entity resolution | ✔ | suppliers 322,655 → 272,271 with 6 guards; countries audited; contract de-duplication across datasets | fuzzy-rule precision 43–47 / 50 is assistant-judged **[R] awaiting your spot-check** |
-| ER schema / knowledge graph across disjoint keys | ✔ | `gold.nodes` / `gold.edges`, 11 node and 11 edge types, 0 orphans; traced contract → ICR/ISR passage | contract ↔ passage links cover 1.3% of contracts (stated) |
-| Parsing, chunking, embedding of 100+-page reports | ✔ | section-aware chunks, tables kept with headers, repeats flagged, 9,564 passages embedded, Vector Search hybrid | English-only embedding model; French-source recall@5 0.33 (1 of 3) after the final attempt (docs/07 §4b) |
+| ETL for tabular **CSV/JSON** + unstructured **PDF/Word** | Partial | JSON APIs → raw Volume → bronze → silver with retries, backoff and resumable pages; PDFs parsed once with `ai_parse_document` (94% vs 26% of tables well-formed) | **Word** path not exercised: the API served PDFs for every slice document; route proposed in docs/08 §3.1 |
+| Entity resolution | Done | Suppliers 322,655 → 272,271 (largest cluster 119 → 40 after guards; fuzzy precision 43–47 / 50, assistant-judged, your spot-check pending); contracts de-duplicated across 3 datasets; country codes audited | — |
+| ER schema / KG linking **via Project ID, sector codes and temporal proximity** | Partial | `gold.nodes` / `gold.edges` (11 node and 11 edge types, 0 orphans); links use **project ID** and **time** (`project+temporal` rule in `src/graph/links.py`, `available_from` on every edge) plus identifiers; traced contract GYTJ201B → ISR passage | **Sector codes** define the universe and form `HAS_SECTOR` edges (396) but are not in the link score (they cannot separate candidates in a one-sector slice); sector term proposed for the full portfolio (docs/08 §3.3). Link coverage 1.3% |
+| Parsing, chunking, embedding of 100+-page reports (tables, annexes) | Done | Section-aware chunks with heading paths, tables with repeated headers, ISR repeats flagged, median 339 tokens, 9,564 passages, Vector Search hybrid; French passages translated for embedding | English-only embedding model (French recall 1 of 3) |
 
 ## §4 Module 2: Predictive and prescriptive engines
 
-| Requirement | Status | Evidence | Gap |
+| Requirement | Status | Evidence and numbers | Gap |
 |---|---|---|---|
-| Tender completion time | ✔ | quantile GBT, P80 coverage 0.81, champion registered | P50 only level with the baseline (100.4 vs 100.8 days) |
-| Amendment probability | ◐ | LLM-extracted events with quotes (223 amendments, 170 time extensions) + heuristic indicator | **no probability**: no public amendment labels; indicator does not track events (r ≈ −0.08) |
-| Re-bidding risk | ✔ | labels with reasons, 97% precision on the main rule, hierarchical rates beat global rate (Brier 0.032 vs 0.039) | classifier not kept (AUC 0.46); rates are history, not forecast |
-| Governance indicators in models | ◐ | WGI / CPIA with release lag | ablation: model is better **without** them on this sample |
-| Agentic RAG surfacing precedents and lessons for a new package | ✔ | fixed tool sequence, 3 scopes + routing, rerank, gate, guardrails; recall@5 0.57 strict / 0.83 lenient | strict recall below the 0.7 target |
+| **Tender completion time** | Done | Quantile GBT, time split, P80 coverage 0.81, P50 MAE 100.4 vs 100.8 baseline (≈), champion v1 | Point estimate not better than the baseline |
+| **Amendment probability** | Partial (no probability) | 223 amendment and 170 time-extension events extracted with quotes; transparent indicator, Spearman r ≈ −0.08 against events → heuristic only | No public amendment labels; production: STEP amendment records → supervised model (docs/08 §4.3) |
+| **Re-bidding risk** | Done | Labels with reasons (re-advertisement rule 97% precision); hierarchical rates Brier 0.032 vs 0.039; classifier AUC 0.46 not kept | One project drives most positives (reported with and without it) |
+| Model family: GBT / **survival analysis** / probabilistic | Done (GBT + Beta-binomial); survival justified as proposed | docs/08 §4.1: censoring needs reliably open tenders; an unmatched notice is more often a join failure | [P] with STEP tender status |
+| Governance indicators as inputs | Done | WGI / CPIA with release lag; ablation reported | They do not help on this sample |
+| **Agentic RAG** surfacing precedents, past specifications and lessons for a new package | Done | Fixed tool sequence, 3 scopes + routing + project-name resolution, hybrid search; recall@5 0.57 strict / 0.83 lenient; **precision@5 0.11 strict / 0.50 lenient** *(added 2026-10-24)*; phrasing robustness: identical top 5 for 5 of 5 questions | Strict recall under the 0.7 target |
 
 ## §4 Module 3: Guardrails and conflicting evidence
 
-| Requirement | Status | Evidence | Gap |
+| Requirement | Status | Evidence and numbers | Gap |
 |---|---|---|---|
-| Validation layers against hallucination, every claim anchored | ✔ | citation validity 1.00, claim support 0.86–0.905 and judge 97.5–100% (range over runs), injection quarantined | verifier and judge are the same model family as the generator |
-| Conflicting evidence (ICR vs ISR) | ✔ | IEG > ICR > latest ISR, all ratings shown, flags (1 IEG downgrade, 2 ISR volatility) | ratings sample check (20) **[R]** |
+| Validation layers; every recommendation anchored in documents and data | Done | Citation validity 1.00; claim support 0.86–0.905 and independent judge 97.5–100% (ranges over runs); injection quarantined; rating facts carry source passages | Judge and generator are the same model family |
+| **Conflicting evidence (ICR vs ISR)** | Done | IEG > ICR > latest ISR; every rating shown; flags found: 1 IEG downgrade, 2 ISR volatility; the rating timeline is given to the answer step as facts | Ratings sample check (20) [your review] |
 
 ## §4 Module 4: Continuous learning and implementation
 
-| Requirement | Status | Evidence | Gap |
+| Requirement | Status | Evidence and numbers | Gap |
 |---|---|---|---|
-| Closed loop updating models and indices | ◐ | incremental embeddings + Delta Sync (used on 2026-10-23 for the 196 re-embedded passages), champion/challenger rule, regression gate | the full weekly job has not been created / run end to end |
-| Phased pilot and KPIs | ✔ | docs/08 §6.2–6.3, AI/BI KPI dashboard deployed (4 pages) | dashboard tiles not yet visually checked; business KPIs are proposed targets only (no pilot) |
+| Closed loop: milestones, supervision notes, **contract amendments** update **models AND vector indices** | Partial | Indices: incremental embedding + Delta Sync (exercised: 196 passages on 2026-10-23); models: champion/challenger rule in notebook 50; new ISRs → extraction → amendment events → indicator; feedback → evaluation set | Full job not yet run end to end; LLM extraction in the job stays a dry run until a call count is approved (cost control) |
+| **Phased pilot** with KPIs: planning cycle time, retrieval precision/recall, adoption | Done (offline KPIs measured; online KPIs proposed) | Phases 0–3 with go/no-go (docs/08 §6.2); recall and precision measured; KPI dashboard deployed with the proposed pilot targets for cycle time and adoption | No pilot users yet: cycle time and adoption are proposed targets only |
 
-## §5 Rubric readiness
+## §5 Rubric dimensions
 
-| Dimension | Strongest evidence | Weakest point to prepare for |
+| Dimension | Strongest evidence | Weakest point (prepare an answer) |
 |---|---|---|
-| System & Knowledge Architecture (30) | one governed workspace; graph with evidence and dates; parse-once; data-quality gate | sparse contract ↔ passage links; Word / PPAR gaps |
-| Analytical & AI Methodology (30) | honest baselines, time splits, calibrated ranges, measured guardrails, lenient vs strict recall | duration ≈ baseline; strict recall 0.57; weak gate; French recall 1 of 3 |
-| Domain Alignment & Data Utilization (25) | three contract datasets reconciled; coverage measured; re-advertisement rule from real procurement practice | SBDs / bid evaluations not public; co-financing not used |
-| Operationalization & Scalability (15) | weekly job design, dashboard, rollout with go/no-go criteria, scaling table | job never run end to end; Free Edition limits |
+| System & Knowledge Architecture (30) | one governed workspace; graph with evidence and dates; parse once; data-quality gate (14 / 14) | link coverage 1.3%; Word path not exercised; sector codes not in the link score |
+| Analytical & AI Methodology (30) | baselines, time splits, calibrated ranges, measured guardrails, strict vs lenient recall and precision, robustness test | duration ≈ baseline; strict recall 0.57; weak gate; French 1 of 3 |
+| Domain Alignment & Data Utilization (25) | three contract datasets reconciled; coverage measured; re-advertisement rule; PDO and financing added | SBDs / bid evaluations not public; guidance notes not indexed; no public co-financing data for the slice |
+| Operationalization & Scalability (15) | weekly job, KPI dashboard, rollout with go/no-go, scaling table | weekly job not yet run end to end; Free Edition limits |
 
-**Fixed during the audit:** the Databricks App crashed on start (Python 3.11 rejects a backslash inside an f-string
-expression in `src/rag/databricks_tools.py`; notebooks run 3.12, so only the app failed). Fixed, redeployed on
-2026-10-23 ("App started successfully"), and `tests/test_py311_compat.py` now guards every `src/` and `app/` file.
+## What you must still do yourself
 
-## Still missing / to do before the interview (prioritised)
-
-1. **Slides as a deck**: only the outline exists (docs/09).
-2. **Open the app and the dashboard once, signed in**: confirm every page and tile renders (needs your sign-in; the
-   app stops 24 h after start, so restart it shortly before the demo).
-3. **Your hand reviews [R]**: 20 lessons + 20 events (notebook 55 §6), 20 ratings, the supplier fuzzy-rule sample.
-4. **Weekly job**: create it (paused) from `jobs/refresh_job.json` and run it once end to end, or say clearly that
-   each step ran individually.
-5. **docs/00 status report** is from 2026-10-22: superseded by this audit (or refresh it).
-6. Gaps to state, not fix: Word ingestion, co-financing, PPARs / thematic studies / guidance notes, SBDs, amendment
-   labels, multilingual embeddings.
+1. **Run the weekly job once**: approve the waiting scheduled session, or ask me to run it (it uses compute).
+2. **Open the app after the latest redeploy** so the duration-model status is logged (the sidebar shows it).
+3. **Hand reviews:** 20 lessons + 20 events (notebook 55 §6), 20 ratings, the supplier fuzzy sample.
+4. Restart the app shortly before the demo (apps stop 24 h after start on Free Edition).

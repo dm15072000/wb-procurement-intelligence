@@ -16,7 +16,7 @@ disbursements, notices), **how it was executed** (ISRs, procurement plans, notic
 
 | Stage (§2) | What the user gets | Evidence behind it |
 |---|---|---|
-| Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid or cancellation rate of similar tenders, similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
+| Planning & strategy | predicted tender duration range (P20/P50/P80), re-bid or cancellation rate of similar tenders, **market-approach options** (how similar packages were procured, by method and market approach, with median notice-to-signing time), similar past contracts, a cited brief of risks and mitigations | gradient-boosted quantile model; Beta-binomial rates; SQL; RAG with guardrails |
 | Tender design & packaging | past scopes and qualification criteria from indexed REOI / IFB notices; lessons on packaging, specifications and market capacity | procurement-notice text, PAD procurement sections, ICR lessons (public SBDs/ToRs are scarce, stated) |
 | Execution & monitoring | early-warning flags with reasons: overdue tenders, disbursement lag, weak ISR ratings, reported problems (a flag means "check", not "late") | duration model, disbursement snapshots, extracted ratings and events |
 | Continuous learning | new ISRs/ICRs become searchable, rated and mined for lessons each week; models retrain under a promotion rule | one Databricks Job, incremental at every step |
@@ -34,15 +34,15 @@ in India, China, Mali, Albania and Sri Lanka (2 IDA countries). Models train on 
 | Assessment source | Implemented with | Status |
 |---|---|---|
 | Major Contract Awards | Finances One **DS00005** (FY2020+), **DS04691** (FY2017–19), **DS01004** (FY2001–16): 491,020 contracts, 0 cross-dataset overlaps | [M] ingested |
-| Projects & Operations | Projects API (22,461 projects): sectors with shares, dates, commitments, agency, env. category | [M] ingested |
-| Finances & disbursements | DS00975 (IBRD) / DS00976 (IDA) monthly snapshots: 17,823 rows for 120 universe projects | [M] ingested |
-| Procurement notices, REOIs, award summaries | procnotices API: notice type, date, reference, full text | [M] ingested |
+| Projects & Operations | Projects API (22,461 projects): sectors with shares, dates, commitments, implementing agency, environmental category, status; **development objective (PDO)** for 148 of 151 road-universe projects (notebook 13) | [M] ingested |
+| Finances & disbursements | DS00975 (IBRD) / DS00976 (IDA) monthly snapshots: 17,823 rows for 120 universe projects; **financing lines** per project from the Projects API (`financier_loan` / `financierdesc` / `financiertype`, notebook 13): 173 lines for 151 projects, all IBRD (45) or IDA (128), so **no co-financier appears in the public data** for this slice; a non-IBRD/IDA financier would be flagged as co-financing. Co-financing amounts need the Bank's internal financing data [P] | [M] ingested |
+| Procurement notices, REOIs, award summaries | procnotices API: notice type, date, reference, full text (IFB, REOI, contract award notices); IFB / REOI text indexed for the demo projects; award notices measure contract coverage | [M] ingested |
 | Procurement Plans | Documents & Reports, parsed with `ai_parse_document`: labels only (dates failed a cross-check: 20% agreement) | [M] labels used |
 | ISRs, PADs, ICRs, IEG ICR Reviews, PPARs, Project Papers | Documents & Reports API → 299 documents → 5,226 section-aware chunks | [M] ingested |
 | CPFs | latest CPF per demo country (filed under two doc types, verified) | [M] ingested |
-| OKR thematic studies, procurement guidance | reachable [V]; proposed as extra lesson sources (§9) | [P] |
+| OKR thematic studies, procurement guidance notes | reachable [V]; **not indexed** (proposed): they would enter the same parse-once → chunk → index path as a new doc type, with a `policy` scope in retrieval, so a brief can cite the procurement rule that applies; IEG's site returned HTTP 403 to scripted requests, so IEG studies come via Documents & Reports | [P] |
 | CPIA, WGI | Indicators API (new `GOV_WGI_*` codes [V]) | [M] ingested |
-| SBDs, bid evaluation reports | not public as data [A] | gap stated |
+| SBDs, bid evaluation reports | not public as data [A]; public SBD templates exist as PDFs but contain no project-specific criteria | gap stated; production path: STEP's internal tender documents under access control (§6.2 phase 3) |
 
 **Incomplete reporting is handled explicitly, never hidden:**
 - Contract coverage per fiscal year is **measured** against an independent source, published award notices: FY2017
@@ -75,7 +75,11 @@ PDFs → Volume → ai_parse_document ONCE (stored, because output is not byte-i
   run tag, so each refresh downloads fresh data.
 - **Parser chosen by measurement** (D6): `ai_parse_document` kept 94% of tables well-formed vs 26% for pdfplumber on
   three real ICRs [M].
-- Notebooks `10`, `11`, `20`; code `src/ingest/`, `src/chunking/`; 84 unit tests for this layer.
+- Notebooks `10`, `11`, `13`, `20`; code `src/ingest/`, `src/chunking/`; 84 unit tests for this layer.
+- **Word documents [P]:** every document of the slice was served as PDF by the Documents & Reports API, so the Word path
+  was not exercised. Production: route by file type: `.docx` through the same `ai_parse_document` step if the format
+  is supported in the workspace (to be verified), otherwise a `python-docx` text-and-table extractor that emits the
+  same section / table records, so chunking and indexing do not change.
 
 ### 3.2 Entity resolution across disjoint keys
 
@@ -105,6 +109,15 @@ Chunk ─DESCRIBES (strong: reference or supplier named)▶ Contract
 Chunk ─MAY_DESCRIBE (weak: ≥3 rare shared words; excluded from evaluation)▶ Contract
 Rating ─RATES▶ Project, ─RATING_EVIDENCE▶ Chunk          Lesson ─TEACHES▶ Project, ─LESSON_EVIDENCE▶ Chunk
 ```
+
+**How keys are reconciled (assessment example: contract row ↔ ICR lesson section):** by **project ID** (every
+contract, document, lesson and rating hangs off its project); by **time** (a passage can describe only a contract signed
+before the document's date: the `project+temporal` rule in `src/graph/links.py`; `available_from` on every edge); and
+by **identifiers and names** in the passage (contract reference, supplier). **Sector codes** are used to define the
+universe (roads ≥ 25% of the project, sector "Rural and Inter-Urban Roads") and as `HAS_SECTOR` edges (396), but not
+inside the link score: in a single-sector slice they cannot separate candidates. For the full portfolio [P] the link
+score adds a sector-match term (contract's project sector = lesson's project sector) and retrieval gets a sector
+filter, so a road lesson is not offered for a water package.
 
 Measured [M]: 11 node types and 11 structured edge types; 0 orphan edges; 0 duplicate node IDs. The assessment's
 example, "link a contract row to an ICR lesson section", is traced end-to-end in notebook 40 on real data
@@ -200,7 +213,9 @@ STEP amendment records (internal), or the same extraction over all ~8,000 ICRs t
 A **fixed tool sequence**, which is easier to test, explain and audit than an open-ended agent:
 
 1. SQL: similar past contracts (category, method, value band, same country first, signed before the as-of date), each
-   carrying dataset and coverage status;
+   carrying dataset and coverage status; and the **market-approach options** of similar packages (method × market
+   approach, counts and median notice-to-signing time; market approach taken from the invitation-for-bids wording
+   where the award data lacks it, labelled "from notice"). Descriptive history, not a recommendation model;
 2. models: duration range and re-bid or cancellation rate (numbers never come from the LLM);
 3. graph: related projects and their documents; project IDs named in a question scope the search;
 4. **hybrid** search (vector + keyword: Vector Search HYBRID mode, or BM25 + whole-code identifier matching as a
@@ -245,7 +260,7 @@ lenient**; citation validity **1.00**; claim support **0.86–0.905** after guar
 verifier removes about 6–9 claims per run; 0 mechanical removals); an independent judge found **97.5–100%** of 40 kept
 claims supported. *Run-to-run variance:* Same frozen questions and temperature 0, yet the LLM's answers and the verifier's verdicts vary slightly between runs, so answer-quality metrics are reported as the range over the 2026-10-23 evaluation runs. Also measured: refusal accuracy **3 / 3**; rating-answer accuracy 1 / 1 (after routing to the
 ICR; it was wrong before); the planted injection passage was quarantined and its claim did not survive.
-**The retrieval gate is a weak first filter:** calibrated cosine threshold 0.682; off-topic questions score 0.66–0.70
+**The retrieval gate is a weak first filter:** calibrated cosine threshold ≈ 0.68; off-topic questions score 0.66–0.70
 and answerable ones 0.66–0.86 (median 0.76), so the distributions **overlap**. On the test half it blocked 1 of 23
 answerable and 2 of 3 off-topic questions; the third off-topic question was refused by the answer step. Refusals
 therefore rest mainly on the **answer step ("insufficient evidence") and the claim verifier**, not on the gate.
@@ -291,6 +306,7 @@ warnings → **RAG regression evaluation** (the job fails if recall@5 drops more
 | KPI | Type | Measured how |
 |---|---|---|
 | Retrieval recall@5 / MRR of historical risk factors | offline | frozen evaluation set (test half; the refusal threshold is set on the other half), per country and per question kind incl. tender design: strict 0.57 / lenient 0.83 [M] |
+| Retrieval precision@5 | offline | share of the top 5 passages that are the gold passage (strict 0.11; at most 0.20 with one gold passage per question) or that an LLM judge finds contain the answer (lenient 0.50) [M] |
 | Citation validity, claim support, judge faithfulness, refusal accuracy | offline | notebook 61: 1.00 / 0.86–0.905 / 97.5–100% / 3 of 3 [M, range over runs] |
 | Duration P50 MAE vs baseline, P80 coverage | offline | notebook 50: 100.4 vs 100.8 days; 0.81 [M] |
 | Re-bid Brier score vs global rate | offline | notebook 51: 0.032 vs 0.039 [M] |
@@ -309,7 +325,7 @@ quality and usage. Online KPIs show test usage only until a pilot, and the busin
 | Documents | 299 | ~550,000 in Documents & Reports; ~50,000 relevant (PAD/ISR/ICR/IEG for IPF) | parse in batched Jobs; parse once and store |
 | Chunks | 5,226 | ~3–5 million | Vector Search standard endpoint with more units; filters unchanged |
 | Contracts | 491,020 | same (already full) | none |
-| Suppliers | 322,655 records | same | blocking already scales; legal-entity register is future work |
+| Suppliers | 322,655 records | same | blocking already scales; registered-company register is future work |
 | LLM extraction | slice | incremental only, keyword pre-filter | cost grows with *new* documents, not the corpus |
 
 ---
@@ -329,9 +345,9 @@ quality and usage. Online KPIs show test usage only until a pilot, and the busin
 
 ## 8. Implemented vs proposed
 
-| Implemented, unit-tested (231 local tests) **and run on Databricks** [M] | Built, run once, needs more use | Proposed only [P] |
+| Implemented, unit-tested (241 local tests) **and run on Databricks** [M] | Built, run once, needs more use | Proposed only [P] |
 |---|---|---|
-| ingestion (10–11), documents and chunking (20–22), data-quality gate (12), suppliers (30), graph (40), duration model (50), re-bid labels and rates (51), extraction of ratings / lessons / events (55), embeddings + Vector Search hybrid index (60), RAG evaluation with guardrails (61), early warnings (70), app setup and deployment (80), KPI dashboard (85) | Databricks App (deployed; pages need a demo session), weekly refresh job (defined, created paused, not yet scheduled), feedback loop (tables and buttons exist; no pilot users yet) | survival model; learned reranker; multilingual embedding model; legal-entity supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
+| ingestion (10–11, 13), documents and chunking (20–22), data-quality gate (12), suppliers (30), graph (40), duration model (50), re-bid labels and rates (51), extraction of ratings / lessons / events (55), embeddings + Vector Search hybrid index (60), RAG evaluation with guardrails (61), early warnings (70), app setup and deployment (80), KPI dashboard (85) | Databricks App (deployed; pages need a demo session), weekly refresh job (defined, created paused, not yet scheduled), feedback loop (tables and buttons exist; no pilot users yet) | survival model; learned reranker; multilingual embedding model; registered-company supplier register; STEP amendment data; OKR / guidance documents in the index; full-portfolio parsing |
 
 ## 9. Risks and limitations (stated, not hidden)
 
@@ -349,6 +365,6 @@ quality and usage. Online KPIs show test usage only until a pilot, and the busin
    of 3 French-source test questions (recall@5 0 → 0.33, n = 3). Known limitation; production fix: a multilingual
    embedding model.
 8. Lending type is today's classification, not the one at approval.
-9. Supplier identity is brand + country, not legal entity; cross-script aliases are future work.
+9. Supplier identity is brand + country, not registered company; cross-script aliases are future work.
 10. Databricks Free Edition: up to 3 apps, an app stops 24 hours after start, and a **daily serverless compute
     quota** (hit once on 2026-10-23; runs resumed the same day).
