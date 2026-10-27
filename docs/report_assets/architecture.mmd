@@ -1,0 +1,33 @@
+%% System architecture for the report (content of docs/10 Diagram 1; laid out as rows for a portrait page)
+flowchart TB
+  subgraph SRC["World Bank open data"]
+    direction LR
+    S1["Contract awards<br/>DS01004 · DS04691 · DS00005"] ~~~ S2["Projects API<br/>notices · disbursements"] ~~~ S3["CPIA + WGI<br/>Indicators API"] ~~~ S4["Documents & Reports<br/>PAD · ISR · ICR · IEG · CPF"]
+  end
+  subgraph M1["M1 · Ingestion and knowledge representation (Unity Catalog)"]
+    direction LR
+    B["bronze → silver<br/>raw copies, retries,<br/>standard values, coverage"] --> QG{{"Quality gate<br/>14 / 14 checks"}} --> KG["Graph: nodes + edges<br/>evidence · available_from"]
+    D["Parse once<br/>section-aware chunks"] --> VS[("Vector Search<br/>hybrid index · 9,564 passages")]
+  end
+  subgraph M2["M2 · Predictive engines and RAG"]
+    direction LR
+    DUR["Duration model<br/>P20 / P50 / P80"] ~~~ RB["Re-bid or cancellation<br/>rates + intervals"] ~~~ EX["Ratings · lessons · events<br/>verbatim quotes"] ~~~ RAG["RAG flow<br/>fixed tool sequence"]
+  end
+  subgraph M3["M3 · Guardrails and conflicting evidence"]
+    direction LR
+    GR["Citation · number · ID checks<br/>+ claim verifier"] ~~~ CF["Conflict rules<br/>IEG > ICR > latest ISR"] ~~~ EW["Early warnings"]
+  end
+  subgraph M4["Users and M4 · continuous learning"]
+    direction LR
+    APP["Databricks App<br/>Plan · Monitor · Ask"] ~~~ DB["AI/BI KPI dashboard"] ~~~ JOB["Weekly job: incremental,<br/>champion/challenger, regression eval"] ~~~ FB["Feedback →<br/>evaluation set"]
+  end
+  SRC --> M1 --> M2 --> M3 --> M4
+
+  classDef src fill:#E8F1EF,stroke:#0F5257,color:#0F2A2E
+  classDef m fill:#FFFFFF,stroke:#0F5257,color:#0F2A2E
+  classDef gate fill:#F3B23C,stroke:#B5781A,color:#1B1B1B
+  classDef out fill:#0F5257,stroke:#0F5257,color:#FFFFFF
+  class S1,S2,S3,S4 src
+  class B,KG,D,VS,DUR,RB,EX,RAG,GR,CF,EW m
+  class QG gate
+  class APP,DB,JOB,FB out

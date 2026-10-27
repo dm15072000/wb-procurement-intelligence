@@ -1,0 +1,47 @@
+%% Data model (docs/02 §2-3): canonical entities and the main relationships stored as gold.nodes / gold.edges
+erDiagram
+  COUNTRY ||--o{ PROJECT : "IN_COUNTRY"
+  SECTOR ||--o{ PROJECT : "HAS_SECTOR (share %)"
+  PROJECT ||--o{ CONTRACT : "FOR_PROJECT"
+  PROJECT ||--o{ DOCUMENT : "FOR_PROJECT"
+  PROJECT ||--o{ NOTICE : "FOR_PROJECT"
+  NOTICE }o--|| TENDER : "ANNOUNCED"
+  TENDER ||--o| CONTRACT : "RESULTED_IN"
+  CONTRACT ||--o{ CONTRACT_AWARD : "one row per supplier"
+  SUPPLIER ||--o{ CONTRACT_AWARD : "AWARDED_TO"
+  DOCUMENT ||--o{ SECTION : "HAS_SECTION"
+  SECTION ||--o{ CHUNK : "HAS_CHUNK"
+  CHUNK }o--o{ CONTRACT : "DESCRIBES / MAY_DESCRIBE"
+  RATING }o--|| PROJECT : "RATES"
+  RATING }o--|| CHUNK : "RATING_EVIDENCE"
+  LESSON }o--|| PROJECT : "TEACHES"
+  LESSON }o--|| CHUNK : "LESSON_EVIDENCE"
+  COUNTRY ||--o{ GOVERNANCE : "CPIA, WGI by year"
+  PROJECT ||--o{ DISBURSEMENT : "monthly snapshots"
+  PROJECT {
+    string project_id "P + 6 digits"
+    date board_approval_date
+    double roads_pct
+    string env_category
+    string implementing_agency
+  }
+  CONTRACT {
+    string contract_key "C:number"
+    string source_dataset
+    string coverage_status
+    string procurement_category
+    string procurement_method
+    string review_type
+    double total_amount_usd
+  }
+  CHUNK {
+    string chunk_id
+    string section_path
+    date doc_date "available_from"
+    boolean is_primary
+  }
+  SUPPLIER {
+    string supplier_key
+    string canonical_name
+    string country_iso3
+  }

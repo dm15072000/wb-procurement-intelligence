@@ -1,0 +1,31 @@
+%% Weekly refresh job (jobs/refresh_job.json), notebook numbers in brackets
+flowchart TB
+  I["Ingest structured<br/>(10)"] --> S["Silver<br/>(11)"]
+  S --> F["PDO + financing<br/>(13)"]
+  S --> SU["Suppliers<br/>(30)"]
+  S --> DOC["New documents only<br/>(20)"]
+  S --> NC["Notice chunks<br/>(21)"]
+  SU --> Q{{"Data-quality gate<br/>(12)"}}
+  S --> Q
+  Q --> G["Graph<br/>(40)"]
+  DOC --> G
+  Q --> DM["Duration model<br/>champion/challenger (50)"]
+  Q --> RR["Re-bid or cancellation<br/>rates (51)"]
+  G --> EX["Extraction<br/>dry run unless approved (55)"]
+  DOC --> EM["Embed changed text<br/>+ index sync (60)"]
+  NC --> EM
+  DM --> EW["Early warnings<br/>(70)"]
+  RR --> EW
+  EX --> EW
+  EM --> EV{{"Regression eval<br/>fails if recall@5 −5 pts (61)"}}
+  EX --> EV
+  DM --> EV
+  EV --> KPI["KPI dashboard<br/>(85, runs even if eval fails)"]
+  EW --> KPI
+
+  classDef step fill:#FFFFFF,stroke:#0F5257,color:#0F2A2E
+  classDef gate fill:#F3B23C,stroke:#B5781A,color:#1B1B1B
+  classDef out fill:#0F5257,stroke:#0F5257,color:#FFFFFF
+  class I,S,F,SU,DOC,NC,G,DM,RR,EX,EM,EW step
+  class Q,EV gate
+  class KPI out
