@@ -1,7 +1,7 @@
 # Runtime dependencies of the Databricks App (app.yaml). Local tests need only pytest (+ scikit-learn, scipy for the
 # model tests). Set scikit-learn to the exact version notebook 50 prints, so the registered model loads cleanly.
 streamlit>=1.37
-databricks-sdk
+databricks-sdk==0.154.0           # pinned: an older pre-installed SDK makes MLflow 3.12 fall back to legacy auth ("set MLFLOW_ENABLE_DB_SDK")
 databricks-sql-connector>=3.0
 databricks-vectorsearch==0.66
 mlflow==3.12.0

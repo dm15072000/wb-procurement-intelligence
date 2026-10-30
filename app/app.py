@@ -89,10 +89,25 @@ def backend():
             info["version"] = mv.version
             print(f"duration model loaded: {dt.DURATION_MODEL} version {mv.version}", file=sys.stderr, flush=True)
     except Exception as e:      # shown on the Plan screen, so a missing model is never silent
-        info = {"load_error": f"{type(e).__name__}: {str(e)[:200]}"}
+        info = {"load_error": f"{type(e).__name__}: {str(e)[:200]}{_sdk_diagnosis()}"}
         print("duration model not loaded:", repr(e), file=sys.stderr, flush=True)
     return dt.DatabricksBackend(run_sql, w, vs_index=idx, fallback_rows=fallback, duration_model=model,
                                 duration_model_info=info), ("Vector Search" if idx else "cosine fallback")
+
+
+def _sdk_diagnosis():
+    """Why MLflow could not use the app's OAuth login: MLflow 3.12 hides the real error and reports
+    "set MLFLOW_ENABLE_DB_SDK" instead. Show the SDK version and the SDK's own login error, if any."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.version import __version__ as sdk_version
+    except Exception as e:
+        return f" (databricks-sdk not importable: {type(e).__name__})"
+    try:
+        cfg = WorkspaceClient().config
+        return f" (databricks-sdk {sdk_version}, auth {cfg.auth_type}, workspace_id {getattr(cfg, 'workspace_id', 'missing')})"
+    except Exception as e:
+        return f" (databricks-sdk {sdk_version}; SDK login failed: {type(e).__name__}: {str(e)[:150]})"
 
 
 @st.cache_data(ttl=3600)
