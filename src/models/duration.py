@@ -99,6 +99,16 @@ def feature_row(duration, contract, project, start_notice_type, earlier_tender_d
     return row
 
 
+def model_input_row(row):
+    """The feature row in the types the registered model's schema expects: every NUMERIC feature as a float
+    (missing = NaN, never 0). MLflow refuses whole numbers (int64) for a double column, e.g. project_age_days."""
+    out = {c: row.get(c) for c in CATEGORICAL}
+    for c in NUMERIC:
+        v = row.get(c)
+        out[c] = float("nan") if v is None else float(v)
+    return out
+
+
 def time_split(rows, date_key="start_notice_date", test_share=0.2):
     """Sort by date; the latest test_share of rows is the test set. Rows on the cutoff date all go to test, so no
     tender in train starts on or after the first test date. Returns (train, test, cutoff_date)."""

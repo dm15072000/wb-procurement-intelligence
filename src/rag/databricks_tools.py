@@ -308,7 +308,7 @@ class DatabricksBackend:
                                   "procurement_method": pkg.get("method"), "borrower_country_iso3": iso3,
                                   "total_amount_usd": pkg.get("amount_usd")},
                                  project, notice_type, earlier, gov, lending)
-            pred = self.duration_model.predict(pd.DataFrame([row])[du.CATEGORICAL + du.NUMERIC]).iloc[0]
+            pred = self.duration_model.predict(pd.DataFrame([du.model_input_row(row)])[du.CATEGORICAL + du.NUMERIC]).iloc[0]
             p20, p50, p80 = (int(round(pred[c])) for c in ("p20", "p50", "p80"))
             info = self.duration_model_info
             facts.append({"kind": "duration_model", "p20": p20, "p50": p50, "p80": p80,
