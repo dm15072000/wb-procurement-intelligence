@@ -45,7 +45,7 @@ end to end · small, partly synthetic evaluation set; judge and generator from t
 ## What to send the interviewer
 
 1. The repository link (README → this summary → proposal).
-2. `slides/procurement_intelligence.pdf` (the deck; the `.pptx` has speaker notes).
+2. The slide deck (sent separately as PDF; the `.pptx` has speaker notes).
 3. `docs/08_proposal.md` (technical proposal) and `docs/07_evaluation.md` (measured results), both in the repo.
 
 ## What to show live (about 10 minutes, after the slides)

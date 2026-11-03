@@ -422,7 +422,7 @@ table(["Folder", "Contents"], [
   ["app/, app.yaml", "Databricks App: Plan a package, Monitor a project, Ask the evidence, Data coverage"],
   ["dashboards/", "KPI dashboard as code: SQL views and the dashboard definition"],
   ["jobs/", "Weekly refresh job definition"],
-  ["slides/, docs/", "Presentation, proposal, evaluation results"],
+  ["docs/", "Proposal, evaluation results, technical report"],
 ], [1.8, 6.2], "Repository layout.");
 table(["Step", "Notebooks", "Purpose"], [
   ["Ingest and clean", "10 → 11 → 13 → 30 → 12", "APIs with retries and backoff; silver tables; PDO and financing; suppliers; quality gate"],

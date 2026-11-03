@@ -7,8 +7,7 @@ assessment (`assessment.md`).
 
 **Start here:** [docs/00_submission_summary.md](docs/00_submission_summary.md) (one page) ·
 [docs/08_proposal.md](docs/08_proposal.md) (technical proposal) · [docs/07_evaluation.md](docs/07_evaluation.md)
-(measured results) · [docs/12_final_audit.md](docs/12_final_audit.md) (requirement-by-requirement audit) ·
-[slides/procurement_intelligence.pptx](slides/procurement_intelligence.pptx) (deck, also as PDF).
+(measured results) · [docs/12_final_audit.md](docs/12_final_audit.md) (requirement-by-requirement audit).
 
 ## Repository layout
 
@@ -20,8 +19,7 @@ assessment (`assessment.md`).
 | `app/`, `app.yaml` | The Databricks App (Streamlit): Plan a package · Monitor a project · Ask the evidence · Data coverage |
 | `dashboards/` | KPI dashboard as code: SQL views + Lakeview JSON builder (deployed by notebook 85) |
 | `jobs/` | The weekly refresh job definition (`refresh_job.json`) |
-| `slides/` | Deck builder (`build_deck.js`), diagrams and the generated deck |
-| `docs/` | Plan, data sources, data model, design, evaluation, proposal, audit, interview Q&A |
+| `docs/` | Plan, data sources, data model, design, evaluation, proposal, audit |
 
 ## Setup
 
